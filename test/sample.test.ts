@@ -148,7 +148,11 @@ describe("Sampler.tick", () => {
 
 	it("reports docker stacks under the cwd and the VM total", async () => {
 		const table = new FakeTable(
-			[row(100, 0, { comm: "pi" }), row(104, 1, { comm: "com.docker.backend" }), row(105, 1, { comm: "Docker" })],
+			[
+				row(100, 0, { comm: "pi" }),
+				row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 }),
+				row(105, 1, { comm: "com.docker.sailor", startSec: 1_700_000_100 }),
+			],
 			new Map([
 				[100, { own: 0, reaped: 0 }],
 				[104, { own: 30, reaped: 2 }],
@@ -163,14 +167,14 @@ describe("Sampler.tick", () => {
 			session: "pi:s1",
 			cwd: "/w",
 			runId: "r1",
-			selfPid: 104,
+			selfPid: 999,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.docker.ok, true);
 		assert.equal(rec.docker.stacks[0]?.cpuS, 12.5);
 		assert.equal(rec.docker.stacks[0]?.containers["aaa"], 12.5);
 		assert.equal(rec.dockerVmCpuS, 42);
-		assert.equal(rec.dockerVmBoot, String(1_700_000_000));
+		assert.equal(rec.dockerVmBoot, String(1_700_000_100));
 	});
 
 	it("reports a failed docker engine as not ok, without throwing", async () => {
