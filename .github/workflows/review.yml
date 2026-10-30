@@ -17,9 +17,9 @@ jobs:
         # ruleset checks -- including the actions a composite action calls.
         uses: elecnix/cite@f5707676437aacf2d3566d0e831c5c558717f994 # v0.15.0
         with:
-          model_api_key: ${{ secrets.OLLAMA_API_KEY }}
-          model_base_url: https://ollama.com/v1
-          model_id: deepseek-v4.1-flash
+          model_api_key: ${{ secrets.REVIEW_MODEL_API_KEY }}
+          model_base_url: ${{ secrets.REVIEW_MODEL_BASE_URL }}
+          model_id: ${{ vars.REVIEW_MODEL_ID }}
           structured_output: tools
 
   prose:
