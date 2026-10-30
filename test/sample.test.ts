@@ -54,6 +54,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 999,
+			selfUid: 501,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.v, 1);
@@ -86,6 +87,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 999,
+			selfUid: 501,
 		});
 		await sampler.tick();
 		assert.equal(envReads, 0); // tree members need no env read
@@ -118,6 +120,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 999,
+			selfUid: 501,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.taggedOrphanCpuS, 4);
@@ -141,6 +144,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 999,
+			selfUid: 501,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.taggedOrphanCpuS, 0);
@@ -190,6 +194,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 100,
+			selfUid: 501,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.docker.ok, false);
@@ -207,6 +212,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 100,
+			selfUid: 501,
 		});
 		await sampler.tick();
 		const rec = await sampler.tick();
@@ -228,6 +234,7 @@ describe("Sampler.tick", () => {
 			cwd: "/w",
 			runId: "r1",
 			selfPid: 200,
+			selfUid: 501,
 		});
 		const rec = await sampler.tick();
 		assert.equal(rec.agentCpuS + rec.descendantCpuS + rec.taggedOrphanCpuS, 0);
