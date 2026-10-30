@@ -26,14 +26,29 @@ const RUSAGE_BUF_U64 = 128;
 
 export class MacOSTable implements ProcTable {
 	private sysctl: (...args: unknown[]) => number;
+	private sysctlbyname: (...args: unknown[]) => number;
 	private procPidRusage: (...args: unknown[]) => number;
 	private validated = false;
+	private tickHz: number | null = null;
 
 	constructor() {
 		const libc = koffi.load("/usr/lib/libc.dylib");
 		const libproc = koffi.load("/usr/lib/libproc.dylib");
 		this.sysctl = libc.func("sysctl", "int", ["int *", "uint", "void *", "size_t *", "void *", "size_t"]);
+		this.sysctlbyname = libc.func("sysctlbyname", "int", ["string", "void *", "size_t *", "void *", "size_t"]);
 		this.procPidRusage = libproc.func("proc_pid_rusage", "int", ["int", "int", "void *"]);
+	}
+
+	/** Mach tick frequency (24 MHz on Apple Silicon, 1 GHz on Intel). */
+	private ticksPerSecond(): number {
+		if (this.tickHz === null) {
+			const buf = Buffer.alloc(8);
+			const sizeBuf = Buffer.alloc(8);
+			sizeBuf.writeBigUInt64LE(8n);
+			const rc = this.sysctlbyname("hw.tbfrequency", buf, sizeBuf, null, 0);
+			this.tickHz = rc === 0 ? Number(buf.readBigUInt64LE(0)) : 1e9;
+		}
+		return this.tickHz;
 	}
 
 	rows(): ProcRow[] | null {
@@ -83,8 +98,10 @@ export class MacOSTable implements ProcTable {
 		if (rc !== 0) return null;
 		const u64 = (i: number) => Number(buf.readBigUInt64LE(i * 8));
 		// rusage_info_v4: uuid[2], user(2), system(3), ..., proc_start(10),
-		// proc_exit(11), child_user(12), child_system(13).
-		return { own: (u64(2) + u64(3)) / 1e9, reaped: (u64(12) + u64(13)) / 1e9 };
+		// proc_exit(11), child_user(12), child_system(13). The times are mach
+		// ticks, not nanoseconds: divide by hw.tbfrequency.
+		const hz = this.ticksPerSecond();
+		return { own: (u64(2) + u64(3)) / hz, reaped: (u64(12) + u64(13)) / hz };
 	}
 
 	readEnvTags(pids: number[]): Map<number, string | null> {

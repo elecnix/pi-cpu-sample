@@ -23,21 +23,20 @@ describe("MacOSTable (real OS)", () => {
 		assert.ok(me!.comm.length > 0);
 	});
 
-	itMac("reads cumulative rusage that advances", async () => {
+	itMac("reads cumulative rusage that advances in real seconds", () => {
 		const table = new MacOSTable();
 		const before = table.rusage(process.pid);
 		assert.ok(before);
-		// Burn measurable CPU, then read again.
-		await new Promise<void>((resolve) => {
-			const child = spawn("/usr/bin/yes", [], { stdio: "ignore" });
-			setTimeout(() => {
-				child.kill("SIGKILL");
-				resolve();
-			}, 120);
-		});
+		// Burn this process's own CPU for ~150 ms, then read again.
+		const end = Date.now() + 150;
+		let x = 0;
+		while (Date.now() < end) x += 1;
+		if (x < 0) throw new Error("unreachable");
 		const after = table.rusage(process.pid);
 		assert.ok(after);
-		assert.ok(after!.own >= before!.own);
+		// The tick conversion must produce real seconds, not mach ticks divided
+		// by 1e9 (a 150 ms burn at the wrong scale reads as 3.6 ms).
+		assert.ok(after!.own - before!.own >= 0.05);
 	});
 
 	itMac("sees a child's CPU folded into the parent after reaping", async () => {
