@@ -1,0 +1,57 @@
+# Garden path in a zero relative clause. "The model name a client sends
+# now picks ..." reads as the command "sends now" before "picks" forces a
+# re-parse. The rule is a POS-tag sequence, not a regex: the first token is
+# a word ending in s that the tagger reads as a verb, the third is a verb
+# (finites included), so a plural noun reads as the subject noun it is and
+# the match does not form. A pronoun-led relative clause ("Anyone who
+# applies now gets a bonus") is unambiguous, so the exceptions entry drops
+# any match whose start falls inside one; that exclusion is rule-local here
+# and used to be the global TokenIgnores line in .vale.ini, which stripped
+# spans from every sentence-scoped check in this section, the 150 upstream
+# ai-tells rules included.
+#
+# Warning level, not error, because Vale exits 0 on warnings: this rule
+# advises, it never fails a run.
+#
+# The false-positive class the regex version carried is roughly halved, not
+# closed, and this comment states the measured number rather than the
+# intention. Over 22 correct sentences of the form "The <plural noun> now
+# pass the audit.", the regex version flagged all 22 and this rule flags 11:
+# it clears "tests", "status", "oracles", "calls", "rows", "results" and
+# their like, and still flags nouns the tagger reads as VBZ ("holds",
+# "makes", "takes", "wants", "gets", "gives", "does", "goes", "says",
+# "seems", "adds"). That is the same tagger-accuracy limit StackedArticles
+# records from the other direction.
+#
+# Known miss, stated per the "Adding a rule" rule in the README: the first
+# token needs the tagger to read its s-word as a verb, and the tagger gets
+# that wrong after some subject nouns. "The model name a config sends now
+# picks the route" is missed because the tagger reads "sends" as a noun
+# there, while the same sentence with "client" or "gate" as the subject is
+# caught. A sweep over thirteen subject nouns in that sentence caught 10 and
+# missed 3 (agent, config, proxy). Matching those would mean admitting
+# NN|NNS to the first token, which re-flags every plural-noun subject above.
+# This rule advises and never fails a run, so a miss costs a missed
+# suggestion, while a false positive costs a writer's trust in the whole
+# set. The miss is cheaper.
+#
+# Requires Vale 3.20.0 or later for rule-local exceptions on a sequence
+# rule.
+extends: sequence
+level: warning
+scope: sentence
+message: "Garden path: '%s' can read as a command. Insert 'that' before the relative clause, or reword."
+tokens:
+  - pattern: '(?i)\b[a-z][a-z]+s\b'
+    tag: VBZ
+  - pattern: (?i)now
+  - pattern: '(?i)\b[a-z][a-z]+s\b'
+    tag: VBZ|VB|VBP
+# A match that begins inside a pronoun-led relative clause is dropped. The
+# class is [a-z\s] rather than [^.!?] so the window cannot cross a comma or
+# a digit into a later clause and suppress an unrelated match; it is
+# uncapped so a long clause is covered as fully as the old TokenIgnores
+# line covered it. A longer window costs nothing measurable: 120 KB of
+# "who " repeats runs in 0.026 s against 0.024 s capped.
+exceptions:
+  - '(?i)\b(?:who|that|which|whose)\b[a-z\s]+?\bnow\b'

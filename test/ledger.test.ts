@@ -1,0 +1,186 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { classify, SessionLedger, DockerLedger } from "../src/ledger.js";
+import type { ProcRow, ProcCpu } from "../src/types.js";
+
+function row(pid: number, ppid: number, opts: Partial<ProcRow> = {}): ProcRow {
+	return {
+		pid,
+		ppid,
+		uid: 501,
+		comm: `p${pid}`,
+		startSec: 1_700_000_000 + pid,
+		startUsec: 0,
+		...opts,
+	};
+}
+
+function cpu(own: number, reaped: number): ProcCpu {
+	return { own, reaped };
+}
+
+describe("classify", () => {
+	const rows = [
+		row(100, 0, { comm: "pi" }), // the agent itself, parent outside the table
+		row(101, 100, { comm: "bash" }),
+		row(102, 101, { comm: "node" }),
+		row(103, 1, { comm: "orphan" }), // reparented to launchd, untagged
+		row(104, 1, { comm: "com.docker.backend" }),
+		row(105, 999, { comm: "stray", uid: 0 }), // another user's process
+	];
+
+	it("walks the parent chain from the agent pid", () => {
+		const m = classify(rows, 100, new Set());
+		assert.deepEqual([...m.tree].sort(), ["100:1700000100:0", "101:1700000101:0", "102:1700000102:0"]);
+	});
+
+	it("does not count a second agent root", () => {
+		const m = classify(rows, 101, new Set());
+		assert.deepEqual([...m.tree].sort(), ["101:1700000101:0", "102:1700000102:0"]);
+	});
+
+	it("separates docker host processes by name prefix", () => {
+		const m = classify(rows, 100, new Set());
+		assert.deepEqual([...m.dockerHost], ["104:1700000104:0"]);
+	});
+
+	it("ignores a process whose parent is outside the table unless it is tagged", () => {
+		const m = classify(rows, 100, new Set(["103:1700000103:0"]));
+		assert.ok(!m.tree.has("103:1700000103:0"));
+		assert.ok(!m.dockerHost.has("103:1700000103:0"));
+	});
+
+	it("never treats the docker host processes as session members", () => {
+		const m = classify(rows, 100, new Set(["104:1700000104:0"]));
+		assert.ok(!m.tree.has("104:1700000104:0"));
+	});
+});
+
+describe("SessionLedger", () => {
+	it("sums own and reaped time of the session set", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const rows = [row(100, 0), row(101, 100), row(102, 101)];
+		const usage = new Map<number, ProcCpu>([
+			[100, cpu(10, 1)],
+			[101, cpu(2, 0.5)],
+			[102, cpu(3, 0)],
+		]);
+		const buckets = ledger.consume(rows, new Set(), usage);
+		assert.equal(buckets.agentCpuS, 10);
+		// descendant = agent's reaped (1) + 101 (2.5) + 102 (3)
+		assert.equal(buckets.descendantCpuS, 6.5);
+		assert.equal(buckets.taggedOrphanCpuS, 0);
+	});
+
+	it("books tagged orphans outside the tree separately", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const rows = [row(100, 0), row(103, 1)];
+		const usage = new Map<number, ProcCpu>([
+			[100, cpu(10, 0)],
+			[103, cpu(4, 0)],
+		]);
+		const buckets = ledger.consume(rows, new Set(["103:1700000103:0"]), usage);
+		assert.equal(buckets.agentCpuS, 10);
+		assert.equal(buckets.descendantCpuS, 0);
+		assert.equal(buckets.taggedOrphanCpuS, 4);
+	});
+
+	it("carries the last known value forward when a rusage read fails", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const rows = [row(100, 0), row(101, 100)];
+		const first = new Map<number, ProcCpu>([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 0)],
+		]);
+		ledger.consume(rows, new Set(), first);
+		// The read for 101 fails this tick: it is simply absent from the map.
+		const second = new Map<number, ProcCpu>([[100, cpu(11, 0)]]);
+		const buckets = ledger.consume(rows, new Set(), second);
+		// 101's last known total (2) still counts, so the ledger cannot dip
+		assert.equal(buckets.descendantCpuS, 2);
+	});
+
+	it("stops carrying a key once its process leaves the table", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const withChild = [row(100, 0), row(101, 100)];
+		const usage = new Map<number, ProcCpu>([
+			[100, cpu(10, 5)],
+			[101, cpu(2, 0)],
+		]);
+		ledger.consume(withChild, new Set(), usage);
+		// The child exited and was reaped: its time moved into the parent's reaped total.
+		const after = [row(100, 0)];
+		const usage2 = new Map<number, ProcCpu>([[100, cpu(11, 7)]]);
+		const buckets = ledger.consume(after, new Set(), usage2);
+		assert.equal(buckets.agentCpuS, 11);
+		assert.equal(buckets.descendantCpuS, 7);
+	});
+
+	it("keeps a reparented session member after it leaves the tree", () => {
+		const ledger = new SessionLedger(100, new Set());
+		// 101 starts inside the tree, then its parent exits and it is reparented.
+		ledger.consume([row(100, 0), row(101, 100)], new Set(), new Map([
+			[100, cpu(0, 0)],
+			[101, cpu(1, 0)],
+		]));
+		const buckets = ledger.consume([row(100, 0), row(101, 1)], new Set(), new Map([
+			[100, cpu(0, 0)],
+			[101, cpu(3, 0)],
+		]));
+		assert.equal(buckets.descendantCpuS, 3);
+	});
+
+	it("lists live processes largest first, capped", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const rows = [row(100, 0)];
+		for (let i = 1; i <= 70; i++) rows.push(row(i, 100));
+		const usage = new Map<number, ProcCpu>([[100, cpu(10, 0)]]);
+		for (let i = 1; i <= 70; i++) usage.set(i, cpu(i, 0));
+		const buckets = ledger.consume(rows, new Set(), usage);
+		assert.equal(buckets.procs.length, 64);
+		assert.equal(buckets.procsTruncated, true);
+		assert.equal(buckets.procs[0]?.cpuS, 70);
+		assert.equal(buckets.procs[0]?.pid, 70);
+	});
+});
+
+describe("DockerLedger", () => {
+	it("sums current container counters per stack", () => {
+		const ledger = new DockerLedger();
+		const sample = ledger.consume([
+			{ id: "a", project: "web", dir: "/w/deploy/local", cpuS: 10 },
+			{ id: "b", project: "web", dir: "/w/deploy/local", cpuS: 5 },
+		]);
+		assert.equal(sample.ok, true);
+		assert.equal(sample.stacks.length, 1);
+		assert.equal(sample.stacks[0]?.cpuS, 15);
+		assert.equal(sample.stacks[0]?.containers["a"], 10);
+	});
+
+	it("keeps a removed container's last value in the stack total", () => {
+		const ledger = new DockerLedger();
+		ledger.consume([{ id: "a", project: "web", dir: "/w", cpuS: 10 }]);
+		const sample = ledger.consume([{ id: "b", project: "web", dir: "/w", cpuS: 7 }]);
+		assert.equal(sample.stacks[0]?.cpuS, 17);
+		// The removed container no longer reports a counter.
+		assert.equal(sample.stacks[0]?.containers["a"], undefined);
+		assert.equal(sample.stacks[0]?.containers["b"], 7);
+	});
+
+	it("treats a dropped counter as a container restart and reports the new value", () => {
+		const ledger = new DockerLedger();
+		ledger.consume([{ id: "a", project: "web", dir: "/w", cpuS: 100 }]);
+		const sample = ledger.consume([{ id: "a", project: "web", dir: "/w", cpuS: 3 }]);
+		assert.equal(sample.stacks[0]?.cpuS, 3);
+		assert.equal(sample.stacks[0]?.containers["a"], 3);
+	});
+
+	it("groups stacks by directory and project", () => {
+		const ledger = new DockerLedger();
+		const sample = ledger.consume([
+			{ id: "a", project: "web", dir: "/w1", cpuS: 10 },
+			{ id: "b", project: "db", dir: "/w2", cpuS: 20 },
+		]);
+		assert.equal(sample.stacks.length, 2);
+	});
+});
