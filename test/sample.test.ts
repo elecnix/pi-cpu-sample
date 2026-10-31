@@ -126,6 +126,38 @@ describe("Sampler.tick", () => {
 		assert.equal(rec.taggedOrphanCpuS, 4);
 	});
 
+	it("reads an untagged process's environment once, then caches the null", async () => {
+		let reads = 0;
+		const table = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(103, 1, { comm: "daemon" })],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[103, { own: 4, reaped: 0 }],
+			]),
+		);
+		table.readEnvTags = (pids: number[]) => {
+			reads++;
+			const out = new Map<number, string | null>();
+			for (const pid of pids) out.set(pid, null); // the process carries no tag
+			return out;
+		};
+		const sampler = new Sampler({
+			table,
+			docker: async () => dockerEmpty,
+			agentPid: 100,
+			agent: "pi",
+			session: "pi:s1",
+			cwd: "/w",
+			runId: "r1",
+			selfPid: 999,
+			selfUid: 501,
+		});
+		await sampler.tick();
+		assert.equal(reads, 1);
+		await sampler.tick();
+		assert.equal(reads, 1); // the null result was cached: no second read
+	});
+
 	it("ignores a process tagged for a different session", async () => {
 		const table = new FakeTable(
 			[row(100, 0, { comm: "pi" }), row(103, 1, { comm: "daemon" })],

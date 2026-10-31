@@ -27,6 +27,14 @@ describe("isUnder", () => {
 		assert.ok(isUnder("/a/b/", "/a/b/"));
 		assert.ok(isUnder("/a/b", "/a/b/"));
 	});
+
+	it("accepts the root under the root", () => {
+		assert.ok(isUnder("/", "/"));
+	});
+
+	it("treats an unreadable directory as inactive", () => {
+		assert.equal(killSwitchActive({ dir: "/nonexistent-dir-that-cannot-exist", env: {} }), false);
+	});
 });
 
 describe("killSwitchActive", () => {
@@ -46,7 +54,7 @@ describe("killSwitchActive", () => {
 		assert.equal(killSwitchActive({ dir: "/nonexistent", env: { CPU_SAMPLE: "on" } }), false);
 	});
 
-	it("treats an unreadable directory as active", () => {
+	it("treats an unreadable directory as inactive", () => {
 		assert.equal(killSwitchActive({ dir: "/nonexistent-dir-that-cannot-exist", env: {} }), false);
 	});
 });

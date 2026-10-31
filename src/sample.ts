@@ -55,17 +55,23 @@ export class Sampler {
 		// Tag detection: only processes outside the tree and outside the Docker
 		// host set, owned by this user, that this run has never classified.
 		const candidates: number[] = [];
+		const candidateKeys = new Map<number, string>();
 		for (const row of rows) {
 			const key = keyOf(row);
 			if (m.tree.has(key) || dockerHostKeys.has(key) || row.uid !== myUid) continue;
 			if (this.everInTree.has(key)) continue; // membership carried from the tree
 			if (row.pid === this.opts.selfPid) continue;
-			if (!this.tagCache.has(key)) candidates.push(row.pid);
+			if (!this.tagCache.has(key)) {
+				candidates.push(row.pid);
+				candidateKeys.set(row.pid, key);
+			}
 		}
 		if (candidates.length > 0) {
 			const tags = table.readEnvTags(candidates);
-			for (const row of rows) {
-				if (tags.has(row.pid)) this.tagCache.set(keyOf(row), tags.get(row.pid) ?? null);
+			for (const pid of candidates) {
+				// A process with no tag caches as null: it will never be a
+				// tagged orphan, so its environment is never read again.
+				this.tagCache.set(candidateKeys.get(pid)!, tags.get(pid) ?? null);
 			}
 		}
 		const taggedKeys = new Set<string>();
