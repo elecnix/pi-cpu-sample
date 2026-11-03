@@ -41,9 +41,9 @@ Counters are cumulative, so a pause keeps the totals exact. Pause and resume bra
 
 | What | CPU per tick, 30 s ticks | CPU per hour |
 | --- | --- | --- |
-| Idle check, 1 session | 26.5 us | 0.0032 s |
-| Idle check, 20 sessions | 611 us, 30.5 us each | 0.073 s |
-| Full sample, Docker stubbed out | 11.6 ms | 1.4 s |
+| Idle check, 1 session | 26.7 us | 0.0032 s |
+| Idle check, 20 sessions | 637 us, 32 us each | 0.077 s |
+| Full sample, Docker stubbed out | 12 ms | 1.5 s |
 
 Fifty idle sessions use about 0.18 CPU-seconds an hour. Fifty sampling sessions use about 70.
 
