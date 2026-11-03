@@ -337,5 +337,7 @@ describe("Sampler.tick with an in-process sampler", () => {
 		const rec = await sampler.tick();
 		assert.equal(rec.agentCpuS, 4);
 		assert.equal(rec.descendantCpuS, 0);
+		// The tagged sampler would land in the orphan bucket without the skip.
+		assert.equal(rec.taggedOrphanCpuS, 0);
 	});
 });
