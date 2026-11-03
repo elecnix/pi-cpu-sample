@@ -45,9 +45,6 @@ class IdleSession implements IdleProbe {
 	trackedKeys(): Set<string> {
 		return new Set();
 	}
-	cpuOf(): number {
-		return 1.5;
-	}
 	row(pid: number) {
 		return this.rowCache.find((r) => r.pid === pid) ?? null;
 	}

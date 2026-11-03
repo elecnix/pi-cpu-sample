@@ -72,12 +72,6 @@ export class Sampler implements IdleProbe {
 		return this.opts.table.row(pid);
 	}
 
-	/** Cumulative CPU of one live pid, 0 when it is gone. */
-	cpuOf(pid: number): number {
-		const ru = this.opts.table.rusage(pid);
-		return ru ? ru.own + ru.reaped : 0;
-	}
-
 	/** Swap the process table, for tests that move a process between ticks. */
 	replaceTable(table: ProcTable): void {
 		this.opts.table = table;

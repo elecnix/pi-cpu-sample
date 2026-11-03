@@ -20,8 +20,6 @@ export interface IdleProbe {
 	descendants(): { key: string; pid: number; cpuS: number }[] | null;
 	/** Keys of session members outside the agent's tree, as of the last sample. */
 	trackedKeys(): Set<string>;
-	/** Cumulative CPU of one live pid. */
-	cpuOf(pid: number): number;
 	/** The row for one live pid, or null when it is gone. */
 	row(pid: number): ProcRow | null;
 }
