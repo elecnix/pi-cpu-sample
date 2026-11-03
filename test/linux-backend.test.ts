@@ -5,6 +5,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { LinuxTable } from "../src/linux.js";
 import { keyOf } from "../src/types.js";
 
@@ -21,7 +22,7 @@ describe("LinuxTable (real OS)", () => {
 		assert.ok(rows!.some((r) => r.startUsec !== 0), "some start times carry a sub-second part");
 	});
 
-	itLinux("lists a child forked by a worker thread", async () => {
+	itLinux("lists a child forked by a worker thread", async (t) => {
 		// The task-level children file only covers one thread, so the union is
 		// what makes this child visible.
 		const { Worker } = await import("node:worker_threads");
@@ -34,7 +35,17 @@ describe("LinuxTable (real OS)", () => {
 		const pid = await new Promise<number>((resolve) => worker.once("message", resolve));
 		try {
 			await new Promise((r) => setTimeout(r, 200));
-			assert.ok(new LinuxTable().childPids(process.pid)?.includes(pid), "the worker's child should be listed");
+			const tids = readdirSync(`/proc/${process.pid}/task`);
+			const files = tids.map((tid) => {
+				try {
+					return [tid, readFileSync(`/proc/${process.pid}/task/${tid}/children`, "utf8").trim()];
+				} catch {
+					return [tid, "MISSING"];
+				}
+			});
+			const listed = new LinuxTable().childPids(process.pid);
+			t.diagnostic(JSON.stringify({ worker: pid, tids: tids.length, files, listed }));
+			assert.ok(listed?.includes(pid), `the worker's child should be listed: ${JSON.stringify({ listed, files })}`);
 		} finally {
 			process.kill(pid, "SIGKILL");
 			void worker.terminate();
