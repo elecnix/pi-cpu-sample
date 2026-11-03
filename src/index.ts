@@ -116,6 +116,9 @@ export default function (pi: ExtensionAPI) {
 				current = null;
 				liveCtx = null;
 				liveSessionId = null;
+				// A session that ends mid-turn must not leave the next one
+				// looking busy.
+				turnOpen = false;
 			}
 		}
 	});
