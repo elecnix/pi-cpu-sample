@@ -38,19 +38,19 @@ const DEFAULT_MAX_IDLE_RATE = 0.005;
 const MIN_BUSY_CPU_S = 0.05;
 
 export class IdleTracker {
-	/** True while the agent runs a turn: agent_start until agent_settled. */
-	busy = false;
 	private last: Map<string, number> | null = null;
 	private lastMs = 0;
 
 	constructor(
 		private probe: IdleProbe,
+		/** True while the agent runs a turn; the extension reads the live answer from pi. */
+		private inTurn: () => boolean = () => false,
 		/** CPU cores a descendant may use, averaged over a check, and still be idle. */
 		private maxIdleRate = DEFAULT_MAX_IDLE_RATE,
 	) {}
 
 	check(nowMs: number = Date.now()): IdleVerdict {
-		if (this.busy) {
+		if (this.inTurn()) {
 			this.snapshot(this.probe.descendants() ?? [], nowMs);
 			return { idle: false, reason: "turn in progress" };
 		}

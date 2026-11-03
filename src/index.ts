@@ -14,7 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import type { ExtensionAPI } from "./pi-stubs.js";
+import type { ExtensionAPI, ExtensionContext } from "./pi-stubs.js";
 import { createTable } from "./backend.js";
 import { DockerClient } from "./docker.js";
 import { IdleTracker } from "./idle.js";
@@ -27,6 +27,7 @@ const INTERVAL_MS = 30_000;
 export default function (pi: ExtensionAPI) {
 	/** The pacer of the running session, or null between sessions. */
 	let current: Pacer | null = null;
+	let liveCtx: ExtensionContext | null = null;
 	let turnOpen = false;
 	let wakeScheduled = false;
 
@@ -69,13 +70,16 @@ export default function (pi: ExtensionAPI) {
 			runId: randomUUID(),
 			selfPid: -1, // sampling is in-process: the agent's own CPU is counted
 		});
-		const tracker = new IdleTracker(sampler);
+		liveCtx = ctx;
+		// pi answers for itself whether a run or a compaction is active. The
+		// event flag covers the gaps: before the first agent_start of a reload,
+		// and after agent_settled but before the next turn begins.
+		const tracker = new IdleTracker(sampler, () => turnOpen || liveCtx?.isIdle() === false);
 		const log = (message: string) => console.error(`[pi-cpu-sample] ${message}`);
 		const pacer = new Pacer(sampler, (rec) => pi.appendEntry("cpu-sample", rec), tracker, log);
 		const timer = setInterval(() => void pacer.tick(), INTERVAL_MS);
 		timer.unref();
 		current = pacer;
-		tracker.busy = turnOpen;
 		// The first sample is the baseline; every later sample subtracts from it.
 		void pacer.tick();
 
@@ -88,6 +92,7 @@ export default function (pi: ExtensionAPI) {
 				// A stopped pacer must not block the next session's start if this
 				// instance sees one before its shutdown returns.
 				if (current === pacer) current = null;
+				if (liveCtx === ctx) liveCtx = null;
 			}
 		});
 	});

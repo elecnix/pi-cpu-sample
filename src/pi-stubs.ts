@@ -9,6 +9,8 @@
 
 export interface ExtensionContext {
 	cwd: string;
+	/** Whether the session has no active agent run or compaction. */
+	isIdle(): boolean;
 	sessionManager: {
 		getSessionId(): string;
 	};
