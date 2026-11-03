@@ -8,6 +8,22 @@ import type { ProcCpu, ProcRow, ProcTable } from "./types.js";
 
 const CLK_TCK = 100;
 
+/**
+ * A start time as whole seconds plus microseconds. `/proc` gives the start in
+ * clock ticks, so the sub-second part is a hundredth of a second; carrying it
+ * keeps the process key distinct when a pid is reused within a second.
+ */
+function startTime(ticks: number): { startSec: number; startUsec: number } {
+	const absolute = ticks / CLK_TCK + bootSeconds();
+	let startSec = Math.floor(absolute);
+	let startUsec = Math.round((absolute - startSec) * 1e6);
+	if (startUsec >= 1_000_000) {
+		startSec += 1;
+		startUsec = 0;
+	}
+	return { startSec, startUsec };
+}
+
 export class LinuxTable implements ProcTable {
 	rows(): ProcRow[] | null {
 		let names: string[];
@@ -39,8 +55,7 @@ export class LinuxTable implements ProcTable {
 					ppid,
 					uid: uidLine ? Number(uidLine[1]) : -1,
 					comm,
-					startSec: Math.floor((starttime / CLK_TCK) + bootSeconds()),
-					startUsec: 0,
+					...startTime(starttime),
 				});
 			} catch {
 				// The process vanished between readdir and read: skip it.
@@ -92,8 +107,7 @@ export class LinuxTable implements ProcTable {
 				ppid: Number(rest[1]),
 				uid: -1,
 				comm: stat.slice(open + 1, close),
-				startSec: Math.floor(starttime / CLK_TCK + bootSeconds()),
-				startUsec: 0,
+				...startTime(starttime),
 			};
 		} catch {
 			return null;
