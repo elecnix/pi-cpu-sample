@@ -24,11 +24,23 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 }
 
+export interface AgentStartEvent {
+	type: "agent_start";
+}
+
+/** Fired after a run has fully settled: no retry, compaction, or queued turn follows. */
+export interface AgentSettledEvent {
+	type: "agent_settled";
+	aborted: boolean;
+}
+
 export interface ExtensionAPI {
 	on(event: "session_start", handler: (event: SessionStartEvent, ctx: ExtensionContext) => void | Promise<void>): void;
 	on(
 		event: "session_shutdown",
 		handler: (event: SessionShutdownEvent, ctx: ExtensionContext) => void | Promise<void>,
 	): void;
+	on(event: "agent_start", handler: (event: AgentStartEvent, ctx: ExtensionContext) => void | Promise<void>): void;
+	on(event: "agent_settled", handler: (event: AgentSettledEvent, ctx: ExtensionContext) => void | Promise<void>): void;
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 }

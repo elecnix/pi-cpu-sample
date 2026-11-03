@@ -64,6 +64,42 @@ export class LinuxTable implements ProcTable {
 		}
 	}
 
+	childPids(pid: number): number[] | null {
+		// One small read lists every child; /proc/<pid>/children does the same
+		// and needs no task walk, but it is a kernel option some builds drop.
+		for (const path of [`/proc/${pid}/task/${pid}/children`, `/proc/${pid}/children`]) {
+			try {
+				const text = readFileSync(path, "utf8").trim();
+				return text === "" ? [] : text.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+			} catch {
+				// Try the next path.
+			}
+		}
+		return null;
+	}
+
+	row(pid: number): ProcRow | null {
+		try {
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+			const open = stat.indexOf("(");
+			const close = stat.lastIndexOf(")");
+			if (open < 0 || close < open) return null;
+			const rest = stat.slice(close + 2).split(" ");
+			const starttime = Number(rest[19]);
+			if (!Number.isInteger(starttime)) return null;
+			return {
+				pid,
+				ppid: Number(rest[1]),
+				uid: -1,
+				comm: stat.slice(open + 1, close),
+				startSec: Math.floor(starttime / CLK_TCK + bootSeconds()),
+				startUsec: 0,
+			};
+		} catch {
+			return null;
+		}
+	}
+
 	readEnvTags(pids: number[]): Map<number, string | null> {
 		const out = new Map<number, string | null>();
 		for (const pid of pids) {

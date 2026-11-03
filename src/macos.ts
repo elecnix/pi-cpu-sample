@@ -28,8 +28,10 @@ export class MacOSTable implements ProcTable {
 	private sysctl: (...args: unknown[]) => number;
 	private sysctlbyname: (...args: unknown[]) => number;
 	private procPidRusage: (...args: unknown[]) => number;
+	private procListChildPids: (...args: unknown[]) => number;
 	private validated = false;
 	private tickHz: number | null = null;
+	private bootSec: number | null = null;
 
 	constructor() {
 		const libc = koffi.load("/usr/lib/libc.dylib");
@@ -37,6 +39,7 @@ export class MacOSTable implements ProcTable {
 		this.sysctl = libc.func("sysctl", "int", ["int *", "uint", "void *", "size_t *", "void *", "size_t"]);
 		this.sysctlbyname = libc.func("sysctlbyname", "int", ["string", "void *", "size_t *", "void *", "size_t"]);
 		this.procPidRusage = libproc.func("proc_pid_rusage", "int", ["int", "int", "void *"]);
+		this.procListChildPids = libproc.func("proc_listchildpids", "int", ["int", "void *", "int"]);
 	}
 
 	/** Mach tick frequency (24 MHz on Apple Silicon, 1 GHz on Intel). */
@@ -97,11 +100,60 @@ export class MacOSTable implements ProcTable {
 		const rc = this.procPidRusage(pid, RUSAGE_INFO_V4, buf);
 		if (rc !== 0) return null;
 		const u64 = (i: number) => Number(buf.readBigUInt64LE(i * 8));
-		// rusage_info_v4: uuid[2], user(2), system(3), ..., proc_start(10),
-		// proc_exit(11), child_user(12), child_system(13). The times are mach
-		// ticks, not nanoseconds: divide by hw.tbfrequency.
+		// rusage_info_v4: uuid[0..1], user(2), system(3), ..., pageins(8),
+		// wasted(9), proc_start(10), proc_exit(11), child_user(12),
+		// child_system(13). The times are mach ticks, not nanoseconds: divide by
+		// hw.tbfrequency.
 		const hz = this.ticksPerSecond();
 		return { own: (u64(2) + u64(3)) / hz, reaped: (u64(12) + u64(13)) / hz };
+	}
+
+	childPids(pid: number): number[] | null {
+		for (let capacity = 64; capacity <= 4096; capacity *= 2) {
+			const buf = Buffer.alloc(capacity * 4);
+			const n = Number(this.procListChildPids(pid, buf, buf.length));
+			if (n < 0) return null;
+			if (n < capacity) {
+				const pids: number[] = [];
+				for (let i = 0; i < n; i++) pids.push(buf.readInt32LE(i * 4));
+				return pids;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * One live pid's row, through `proc_pid_rusage` alone: macOS 27 no longer
+	 * answers a per-pid process table lookup, and scanning the whole table for
+	 * one pid would cost more than the sample it is meant to save.
+	 *
+	 * The row exists exactly while the process is alive: a reaped process
+	 * reports an exit time. macOS 27 fills neither the pid field nor the
+	 * microsecond start, and its `proc_start_abstime` runs on a clock that stops
+	 * in sleep, so `startSec` here is for display only and the caller must not
+	 * compare it against the table's.
+	 */
+	row(pid: number): ProcRow | null {
+		const buf = Buffer.alloc(RUSAGE_BUF_U64 * 8);
+		if (this.procPidRusage(pid, RUSAGE_INFO_V4, buf) !== 0) return null;
+		const u64 = (i: number) => buf.readBigUInt64LE(i * 8);
+		if (u64(11) !== 0n) return null; // proc_exit_abstime: the process is gone
+		const startTicks = u64(10); // proc_start_abstime
+		if (startTicks === 0n) return null;
+		const startSec = Math.floor(this.bootSeconds() + Number(startTicks) / this.ticksPerSecond());
+		return { pid, ppid: -1, uid: -1, comm: "", startSec, startUsec: 0 };
+	}
+
+	/** Wall-clock seconds at boot, from `kern.boottime`. */
+	private bootSeconds(): number {
+		if (this.bootSec === null) {
+			const buf = Buffer.alloc(16);
+			const sizeBuf = Buffer.alloc(8);
+			sizeBuf.writeBigUInt64LE(16n);
+			const rc = this.sysctlbyname("kern.boottime", buf, sizeBuf, null, 0);
+			this.bootSec = rc === 0 ? Number(buf.readBigInt64LE(0)) : 0;
+		}
+		return this.bootSec;
 	}
 
 	readEnvTags(pids: number[]): Map<number, string | null> {

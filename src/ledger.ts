@@ -80,6 +80,21 @@ export interface Buckets {
 
 const PROC_LIST_CAP = 64;
 
+/**
+ * Session members that are not in the agent's tree: tagged orphans, and
+ * processes that were in the tree and now sit outside it. A paused sampler
+ * watches this set, because these are the processes it can no longer see.
+ */
+export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: Set<string>, everInTree: Set<string>): Set<string> {
+	const m = classify(rows, agentPid, taggedKeys);
+	const keys = new Set<string>();
+	for (const key of m.tagged) keys.add(key);
+	for (const key of everInTree) {
+		if (!m.tree.has(key) && !m.dockerHost.has(key) && m.rows.has(key)) keys.add(key);
+	}
+	return keys;
+}
+
 export class SessionLedger {
 	/** Last known totals per key, for reads that fail this tick. */
 	private lastTotal = new Map<string, number>();

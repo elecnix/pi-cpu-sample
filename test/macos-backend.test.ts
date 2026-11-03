@@ -99,3 +99,25 @@ describe("MacOSTable (real OS)", () => {
 		}
 	});
 });
+
+describe("MacOSTable idle lookup (real OS)", () => {
+	itMac("returns a row for this process and none for a pid that is gone", () => {
+		const table = new MacOSTable();
+		assert.ok(table.row(process.pid), "this process should have a row");
+		assert.equal(table.row(99_999_999), null);
+	});
+
+	itMac("lists this process's children", async () => {
+		const table = new MacOSTable();
+		// The test runner may run other children beside this one, so the
+		// assertion is containment, not an exact list.
+		assert.ok(!(table.childPids(process.pid) ?? []).includes(99_999_999));
+		const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { stdio: "ignore" });
+		try {
+			await new Promise((r) => setTimeout(r, 200));
+			assert.ok((table.childPids(process.pid) ?? []).includes(child.pid!), "the spawned child should be listed");
+		} finally {
+			child.kill("SIGKILL");
+		}
+	});
+});

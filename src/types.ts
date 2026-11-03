@@ -52,6 +52,17 @@ export interface ProcTable {
 	 * other users) come back absent.
 	 */
 	readEnvTags(pids: number[]): Map<number, string | null>;
+	/**
+	 * The direct children of one process, or null when the platform cannot say.
+	 * The sampler walks this upward from the agent; it costs one kernel call per
+	 * process and never reads the whole table.
+	 */
+	childPids(pid: number): number[] | null;
+	/**
+	 * The single row for one live pid, or null when the process is gone. A pid
+	 * whose start time differs from the recorded one is a different process.
+	 */
+	row(pid: number): ProcRow | null;
 }
 
 /** One running Docker compose stack under the session's working directory. */
