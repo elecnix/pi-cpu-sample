@@ -305,7 +305,13 @@ describe("Pacer", () => {
 	});
 
 	it("skips the sample while switched off, and resumes when switched on", async () => {
-		const sampler = { calls: 0, tick: async () => { this.calls += 1; return record(); } };
+		let calls = 0;
+		const sampler = {
+			tick: async (): Promise<SampleRecord> => {
+				calls += 1;
+				return record();
+			},
+		};
 		let enabled = false;
 		const appended: SampleRecord[] = [];
 		const tracker = { check: () => ({ idle: false, reason: "turn" }) };
@@ -315,6 +321,7 @@ describe("Pacer", () => {
 		enabled = true;
 		await pacer.tick();
 		assert.equal(appended.length, 1);
+		assert.equal(calls, 1);
 	});
 
 	it("logs a throwing idle check instead of rejecting", async () => {
