@@ -128,6 +128,32 @@ describe("DockerClient", () => {
 		assert.equal(snap.ok, false);
 	});
 
+	it("picks up a Docker that starts after the client was built", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "docker-mock-"));
+		const socketPath = join(dir, "docker.sock");
+		const client = new DockerClient(undefined, 4000, { DOCKER_HOST: `unix://${socketPath}` });
+		// No socket yet: the first tick reports Docker down.
+		assert.equal((await client.listUnder("/w")).ok, false);
+
+		const server = createServer((socket: Socket) => {
+			socket.on("data", () => {
+				const body = JSON.stringify([]);
+				socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+		cleanups.push(
+			() =>
+				new Promise<void>((resolve) => {
+					server.close(() => resolve());
+					rmSync(dir, { recursive: true, force: true });
+				}),
+		);
+		// The same client finds it on a later tick, without being rebuilt.
+		const snap = await client.listUnder("/w");
+		assert.equal(snap.ok, true);
+	});
+
 	it("marks the snapshot failed when the socket is missing", async () => {
 		const client = new DockerClient(join(tmpdir(), "no-such-docker-sock"));
 		const snap = await client.listUnder("/w");

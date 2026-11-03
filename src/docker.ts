@@ -48,19 +48,33 @@ export const LABEL_DIR = "com.docker.compose.project.working_dir";
 export const LABEL_PROJECT = "com.docker.compose.project";
 
 export class DockerClient {
-	private readonly socketPath: string | null;
+	private readonly explicitPath: string | undefined;
 
-	/** Pass a socket path to override the resolution, or none to read the environment. */
-	constructor(socketPath?: string, private timeoutMs = 4000) {
-		this.socketPath = socketPath ?? resolveSocket({ DOCKER_HOST: process.env.DOCKER_HOST });
+	/**
+	 * Pass a socket path to override the resolution, or none to resolve on each
+	 * call. Resolving per call is what lets a session pick up a Docker that
+	 * starts after the session did.
+	 */
+	constructor(
+		socketPath?: string,
+		private timeoutMs = 4000,
+		private env: Record<string, string | undefined> = process.env,
+	) {
+		this.explicitPath = socketPath;
+	}
+
+	private socket(): string | null {
+		if (this.explicitPath !== undefined) return this.explicitPath;
+		return resolveSocket({ DOCKER_HOST: this.env.DOCKER_HOST });
 	}
 
 	/** Cumulative container CPU seconds for every stack under `cwd`. */
 	async listUnder(cwd: string): Promise<{ ok: boolean; containers: ContainerObs[] }> {
-		if (this.socketPath === null) return { ok: false, containers: [] };
+		const socketPath = this.socket();
+		if (socketPath === null) return { ok: false, containers: [] };
 		let list: ContainerListEntry[];
 		try {
-			list = JSON.parse(await this.get("/containers/json?all=false")) as ContainerListEntry[];
+			list = JSON.parse(await this.get(socketPath, "/containers/json?all=false")) as ContainerListEntry[];
 		} catch {
 			return { ok: false, containers: [] };
 		}
@@ -72,7 +86,7 @@ export class DockerClient {
 			if (!id || !dir || !isUnder(dir, cwd)) continue;
 			try {
 				const stats = JSON.parse(
-					await this.get(`/containers/${id}/stats?stream=false&one-shot=true`),
+					await this.get(socketPath, `/containers/${id}/stats?stream=false&one-shot=true`),
 				) as { cpu_stats?: { cpu_usage?: { total_usage?: number } } };
 				const ns = stats.cpu_stats?.cpu_usage?.total_usage;
 				if (typeof ns !== "number") continue;
@@ -89,9 +103,7 @@ export class DockerClient {
 		return { ok: true, containers: obs };
 	}
 
-	private get(path: string): Promise<string> {
-		const socketPath = this.socketPath;
-		if (socketPath === null) return Promise.reject(new Error("no docker socket"));
+	private get(socketPath: string, path: string): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const req = request(
 				{
