@@ -122,6 +122,17 @@ describe("IdleTracker.check", () => {
 		assert.equal(tracker.check(0).idle, false);
 	});
 
+	it("stays busy when a tracked key cannot be read", () => {
+		// The key format comes from keyOf; a key that does not parse must not read
+		// as a departed member, or the sampler would pause over live work.
+		const probe = new FakeProbe(100);
+		probe.tracked = new Set(["not-a-key"]);
+		const tracker = new IdleTracker(probe);
+		const verdict = tracker.check(0);
+		assert.equal(verdict.idle, false);
+		assert.match(verdict.reason, /cannot be read/);
+	});
+
 	it("never goes idle when the children cannot be listed", () => {
 		class Blind extends FakeProbe {
 			descendants(): null {

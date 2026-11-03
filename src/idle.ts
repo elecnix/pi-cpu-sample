@@ -8,7 +8,7 @@
  * lookup. See the README for its measured cost.
  */
 
-import type { ProcRow } from "./types.js";
+import { pidOf, type ProcRow } from "./types.js";
 
 /** What the check can learn about the session, in the cheap form. */
 export interface IdleProbe {
@@ -78,20 +78,26 @@ export class IdleTracker {
 		if (previous !== null && grew > MIN_BUSY_CPU_S && grew > windowS * this.maxIdleRate) {
 			return { idle: false, reason: `descendants used ${grew.toFixed(2)} CPU-s` };
 		}
+		if (alive === -1) return { idle: false, reason: "a tracked key cannot be read" };
 		if (alive !== null) return { idle: false, reason: `pid ${alive} outside the tree is alive` };
 		if (descendants.length === 0) return { idle: true, reason: "no descendants" };
 		return { idle: true, reason: "quiet" };
 	}
 
-	/** A session member outside the tree whose pid still names the same process. */
+	/**
+	 * A session member outside the tree whose pid still names a live process, or
+	 * null when every member is gone. A key this cannot read returns -1, which
+	 * counts as alive: a member the check cannot inspect may still be working.
+	 */
 	private aliveOutsideTree(): number | null {
 		for (const key of this.probe.trackedKeys()) {
-			const [pidText] = key.split(":");
+			const pid = pidOf(key);
+			if (Number.isNaN(pid)) return -1;
 			// Liveness only. macOS 27 answers neither the pid nor a stable start
 			// time for a single process, so the start time cannot confirm that a
 			// reused pid is the member this session recorded. A reused pid reads
 			// as alive and costs one sample, which is the safe direction.
-			const row = this.probe.row(Number(pidText));
+			const row = this.probe.row(pid);
 			if (row) return row.pid;
 		}
 		return null;

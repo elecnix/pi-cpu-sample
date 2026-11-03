@@ -37,6 +37,15 @@ export function keyOf(row: ProcRow): string {
 }
 
 /**
+ * The pid of a key built by `keyOf`, or NaN when the key is not one. Callers
+ * that read a key treat NaN as "cannot tell", never as "gone".
+ */
+export function pidOf(key: string): number {
+	const pid = Number(key.split(":")[0]);
+	return Number.isInteger(pid) && pid > 0 ? pid : Number.NaN;
+}
+
+/**
  * The platform process table. Everything the sampler needs from the operating
  * system, so the accounting logic can be tested against a fake table.
  */

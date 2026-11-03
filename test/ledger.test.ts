@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { classify, SessionLedger, DockerLedger } from "../src/ledger.js";
+import { keyOf, pidOf } from "../src/types.js";
 import type { ProcRow, ProcCpu } from "../src/types.js";
 
 function row(pid: number, ppid: number, opts: Partial<ProcRow> = {}): ProcRow {
@@ -232,6 +233,14 @@ describe("DockerLedger", () => {
 			{ id: "b", project: "db", dir: "/w2", cpuS: 20 },
 		]);
 		assert.equal(sample.stacks.length, 2);
+	});
+});
+
+describe("process keys", () => {
+	it("round-trip the pid", () => {
+		const r = row(4242, 0);
+		assert.equal(pidOf(keyOf(r)), 4242);
+		assert.ok(Number.isNaN(pidOf("nonsense")));
 	});
 });
 
