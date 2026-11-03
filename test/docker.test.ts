@@ -128,6 +128,15 @@ describe("DockerClient", () => {
 		assert.equal(snap.ok, false);
 	});
 
+	it("reports Docker down when a 200 body is not a container list", async () => {
+		const mock = startDockerMock({ containers: null, stats: {} });
+		cleanups.push(mock.close);
+		const client = new DockerClient(mock.socketPath);
+		const snap = await client.listUnder("/w");
+		assert.equal(snap.ok, false);
+		assert.equal(snap.containers.length, 0);
+	});
+
 	it("picks up a Docker that starts after the client was built", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "docker-mock-"));
 		const socketPath = join(dir, "docker.sock");

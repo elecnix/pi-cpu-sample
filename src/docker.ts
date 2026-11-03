@@ -74,14 +74,18 @@ export class DockerClient {
 		if (socketPath === null) return { ok: false, containers: [] };
 		let list: ContainerListEntry[];
 		try {
-			list = JSON.parse(await this.get(socketPath, "/containers/json?all=false")) as ContainerListEntry[];
+			const parsed: unknown = JSON.parse(await this.get(socketPath, "/containers/json?all=false"));
+			// A 200 with something other than an array is Docker answering badly,
+			// not a reason to throw past this method's contract.
+			if (!Array.isArray(parsed)) return { ok: false, containers: [] };
+			list = parsed as ContainerListEntry[];
 		} catch {
 			return { ok: false, containers: [] };
 		}
 		const obs: ContainerObs[] = [];
 		for (const c of list) {
-			const id = c.Id ?? "";
-			const labels = c.Labels ?? {};
+			const id = c?.Id ?? "";
+			const labels = c?.Labels ?? {};
 			const dir = labels[LABEL_DIR] ?? "";
 			if (!id || !dir || !isUnder(dir, cwd)) continue;
 			try {
