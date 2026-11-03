@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Sampler } from "../src/sample.js";
+import { Sampler, byDepth } from "../src/sample.js";
 import type { ContainerObs, RawDockerSnapshot } from "../src/ledger.js";
 import type { ProcCpu, ProcRow, ProcTable } from "../src/types.js";
 
@@ -339,5 +339,18 @@ describe("Sampler.tick with an in-process sampler", () => {
 		assert.equal(rec.descendantCpuS, 0);
 		// The tagged sampler would land in the orphan bucket without the skip.
 		assert.equal(rec.taggedOrphanCpuS, 0);
+	});
+});
+
+describe("read order", () => {
+	it("reads a parent's CPU before its children's", () => {
+		// The rusage reads are separate calls. Reading a parent first means a child
+		// that exits mid-pass is either absent from its own read or already inside
+		// the parent's reaped total, never both.
+		const rows = [row(102, 101), row(101, 100), row(100, 0), row(200, 0)];
+		const ordered = byDepth(rows).map((r) => r.pid);
+		assert.ok(ordered.indexOf(100) < ordered.indexOf(101));
+		assert.ok(ordered.indexOf(101) < ordered.indexOf(102));
+		assert.deepEqual([...ordered].sort((a, b) => a - b), [100, 101, 102, 200]);
 	});
 });

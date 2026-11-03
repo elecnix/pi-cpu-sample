@@ -8,12 +8,13 @@
  * covers processes that have already left the table. The reader subtracts
  * consecutive samples, so the ledger only has to keep the sum from dipping.
  *
- * A member that exits is handled by who owned its exit. If its session parent
- * is alive, or was a session member when the sampler last saw the member, that
- * parent's reaped total carries the time and the member adds nothing. If
- * launchd owned it, nothing else records its time, so its last total is added
- * for the rest of the run. A floor on each bucket guards the totals in any
- * case the sampler cannot see.
+ * A member that exits is handled by its last parent. When that parent was a
+ * session process, its reaped total is where the time lands, and the member
+ * adds nothing; a reaped total cannot say which child it covers, so a child
+ * reparented to launchd after its session parent died first is lost. When the
+ * last parent was outside the session, such as launchd, nothing else records
+ * the time, so the member's last total is added for the rest of the run. A
+ * floor on each bucket guards the totals in any case the sampler cannot see.
  *
  * That floor is what holds a departed member's time. A process reaped by its
  * session parent leaves through the parent's reaped total, so the sum does not
@@ -113,9 +114,8 @@ export class SessionLedger {
 	 * new bucket counted it again.
 	 */
 	private bucketOf = new Map<string, "agent" | "descendant" | "orphan">();
-	/** The last known total, reaped total and parent per key, for exits. */
+	/** The last known total and parent per key, for exits. */
 	private lastTotal = new Map<string, number>();
-	private lastReaped = new Map<string, number>();
 	private lastParent = new Map<string, string | null>();
 
 	/**
@@ -150,14 +150,12 @@ export class SessionLedger {
 				// reaped total already holds that time.
 				const departed = this.lastTotal.get(key);
 				const parent = this.lastParent.get(key) ?? null;
-				const parentIsMember = parent !== null && (this.everInTree.has(parent) || taggedKeys.has(parent));
-				// A parent that is still alive will fold the exit into its reaped
-				// total. A parent that left the table only holds the time if it had
-				// already reaped it, which its last reaped total shows.
-				const parentHasIt =
-					parent !== null &&
-					(m.rows.has(parent) || (this.lastReaped.get(parent) ?? 0) >= (departed ?? 0) - 1e-9);
-				const ownedBySession = parentIsMember && parentHasIt;
+				// A member whose last parent was a session process adds nothing:
+				// that parent's reaped total is the only place its time can go,
+				// and a reaped total cannot say which child it covers. A member
+				// whose last parent was outside the session, such as launchd,
+				// has its total added.
+				const ownedBySession = parent !== null && (this.everInTree.has(parent) || taggedKeys.has(parent));
 				if (departed !== undefined && !ownedBySession) {
 					const bucket = this.bucketOf.get(key) ?? (taggedKeys.has(key) && !this.everInTree.has(key) ? "orphan" : "descendant");
 					if (bucket === "orphan") taggedOrphanCpuS += departed;
@@ -171,10 +169,7 @@ export class SessionLedger {
 			const ru = usage.get(row.pid) ?? null;
 			const total = ru ? ru.own + ru.reaped : 0;
 			const own = ru ? ru.own : 0;
-			if (ru) {
-				this.lastTotal.set(key, total);
-				this.lastReaped.set(key, ru.reaped);
-			}
+			if (ru) this.lastTotal.set(key, total);
 			this.lastParent.set(key, keyByPid.get(row.ppid) ?? null);
 			procs.push({ name: row.comm, pid: row.pid, cpuS: total });
 			if (row.pid === this.agentPid) {

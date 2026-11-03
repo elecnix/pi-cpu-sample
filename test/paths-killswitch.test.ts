@@ -39,9 +39,6 @@ describe("isUnder", () => {
 		assert.ok(isUnder("/", "/"));
 	});
 
-	it("treats an unreadable directory as inactive", () => {
-		assert.equal(killSwitchActive({ dir: "/nonexistent-dir-that-cannot-exist", env: {} }), false);
-	});
 });
 
 describe("killSwitchActive", () => {

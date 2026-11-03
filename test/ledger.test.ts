@@ -289,7 +289,7 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.descendantCpuS, 4);
 	});
 
-	it("adds a child when its session parent died before reaping it", () => {
+	it("does not add a child whose last parent was a session process", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const b = row(101, 100);
 		const c = row(102, 101);
@@ -298,17 +298,19 @@ describe("SessionLedger with members outside the tree", () => {
 			[101, cpu(2, 0)],
 			[102, cpu(3, 0)],
 		]));
-		// Both gone next tick. The agent reaped B, so B's 2 s sits in the agent's
-		// reaped total, but nothing reaped C: its parent died first, so it went to
-		// launchd. C's 3 s has to be carried.
+		// Both gone next tick, and the agent reaped B. C's parent died first, so
+		// launchd reaped C, but its last parent was a session process and a reaped
+		// total cannot say which child it covers, so C's 3 s is not added. This is
+		// the documented limit; counting it would double a child the parent had
+		// reaped instead.
 		const after = ledger.consume([row(100, 0), row(103, 100)], new Set(), new Map([
 			[100, cpu(10, 2)],
 			[103, cpu(10, 0)],
 		]));
-		assert.equal(after.descendantCpuS, 15);
+		assert.equal(after.descendantCpuS, 12);
 	});
 
-	it("does not carry a child its dead parent had already reaped", () => {
+	it("does not carry a child whose session parent reaped it", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const b = row(101, 100);
 		const c = row(102, 101);

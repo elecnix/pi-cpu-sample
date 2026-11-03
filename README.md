@@ -58,6 +58,7 @@ A process that was ever a tree member remains attributed after its original pare
 ## Limits
 
 - A reparented process that starts and exits between two samples loses its CPU, bounded by one 30-second interval.
+- A child whose session parent left the table before reaping it is lost, because its parent's reaped total cannot say which child it covers. The alternative would count a child twice whenever the parent did reap it.
 - Hardened or SIP-protected binaries hide their environment, so the tag inside such a process is invisible. Tree membership still attributes the process while it remains inside the tree.
 - A process that runs `env -i` drops the tag.
 - Container CPU reaches the ledger through compose labels. A stack started outside the session's cwd goes unsampled. A stack that keeps running while its session is idle counts for the session only until the idle began, and the reader's snapshots record the rest as unowned.

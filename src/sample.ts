@@ -115,8 +115,11 @@ export class Sampler implements IdleProbe {
 			if (tag === this.opts.session) taggedKeys.add(key);
 		}
 
+		// Parents first: the reads are separate calls, and this order means a child
+		// that exits mid-pass is either gone from its own read or already inside
+		// the parent's reaped total, never counted by both.
 		const usage = new Map<number, ProcCpu>();
-		for (const row of rows) {
+		for (const row of byDepth(rows)) {
 			if (row.pid === excludePid) continue;
 			const ru = table.rusage(row.pid);
 			if (ru) usage.set(row.pid, ru);
@@ -174,6 +177,37 @@ export class Sampler implements IdleProbe {
 		this.seq += 1;
 		return record;
 	}
+}
+
+/**
+ * The rows ordered so that every parent comes before its children. The rusage
+ * reads follow this order; a child read after its parent cannot be counted in
+ * both its own time and the parent's reaped total.
+ */
+export function byDepth(rows: ProcRow[]): ProcRow[] {
+	const ids = new Set(rows.map((r) => r.pid));
+	const children = new Map<number, ProcRow[]>();
+	for (const row of rows) {
+		const list = children.get(row.ppid);
+		if (list) list.push(row);
+		else children.set(row.ppid, [row]);
+	}
+	const out: ProcRow[] = [];
+	const seen = new Set<number>();
+	let level = rows.filter((r) => !ids.has(r.ppid) || r.ppid === r.pid);
+	while (level.length > 0) {
+		const next: ProcRow[] = [];
+		for (const row of level) {
+			if (seen.has(row.pid)) continue;
+			seen.add(row.pid);
+			out.push(row);
+			next.push(...(children.get(row.pid) ?? []));
+		}
+		level = next;
+	}
+	// A cycle cannot happen in a process table, but never drop a row over one.
+	for (const row of rows) if (!seen.has(row.pid)) out.push(row);
+	return out;
 }
 
 /**
