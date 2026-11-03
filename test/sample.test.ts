@@ -263,10 +263,16 @@ describe("Sampler.tick", () => {
 	});
 
 	it("does not count the sampler process in the session", async () => {
-		const table = new FakeTable([row(100, 0, { comm: "pi" }), row(200, 1, { comm: "sampler" })], new Map([
-			[100, { own: 0, reaped: 0 }],
-			[200, { own: 9, reaped: 0 }],
-		]));
+		// The sampler inherits the session tag, so without the exclusion it would
+		// count as a tagged orphan.
+		const table = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(200, 1, { comm: "sampler" })],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[200, { own: 9, reaped: 0 }],
+			]),
+			new Map([[200, "pi:s1"]]),
+		);
 		const sampler = new Sampler({
 			table,
 			docker: async () => dockerEmpty,
@@ -309,10 +315,14 @@ describe("Sampler.tick with an in-process sampler", () => {
 	});
 
 	it("still excludes a separate sampler process from the session", async () => {
-		const table = new FakeTable([row(100, 0, { comm: "pi" }), row(200, 1, { comm: "sampler" })], new Map([
-			[100, { own: 4, reaped: 0 }],
-			[200, { own: 9, reaped: 0 }],
-		]));
+		const table = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(200, 1, { comm: "sampler" })],
+			new Map([
+				[100, { own: 4, reaped: 0 }],
+				[200, { own: 9, reaped: 0 }],
+			]),
+			new Map([[200, "claude:s1"]]),
+		);
 		const sampler = new Sampler({
 			table,
 			docker: async () => dockerEmpty,

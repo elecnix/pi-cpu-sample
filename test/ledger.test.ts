@@ -131,6 +131,22 @@ describe("SessionLedger", () => {
 		assert.equal(buckets.descendantCpuS, 7);
 	});
 
+	it("keeps a key in the bucket it was first seen in", () => {
+		// An orphan that later shows up as an agent child must not be counted in
+		// both buckets.
+		const ledger = new SessionLedger(100, new Set());
+		const key = "101:1700000101:0";
+		ledger.consume([row(100, 0), row(101, 1)], new Set([key]), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(5, 0)],
+		]));
+		const after = ledger.consume([row(100, 0), row(101, 100)], new Set([key]), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(5, 0)],
+		]));
+		assert.equal(after.descendantCpuS + after.taggedOrphanCpuS, 5);
+	});
+
 	it("counts a tagged process that started in the tree only once", () => {
 		// A member can carry the tag and still have started inside the tree. If
 		// it moved to the orphan bucket when it was reparented, its earlier

@@ -45,7 +45,7 @@ export class IdleTracker {
 		private probe: IdleProbe,
 		/** True while the agent runs a turn; the extension reads the live answer from pi. */
 		private inTurn: () => boolean = () => false,
-		/** CPU cores a descendant may use, averaged over a check, and still be idle. */
+		/** CPU cores the descendants may use together over a check, and still be idle. */
 		private maxIdleRate = DEFAULT_MAX_IDLE_RATE,
 	) {}
 

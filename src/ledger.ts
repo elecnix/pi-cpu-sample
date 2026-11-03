@@ -107,6 +107,12 @@ export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: S
 export class SessionLedger {
 	/** The last reported bucket totals; each bucket only ever grows. */
 	private lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0 };
+	/**
+	 * The bucket each key was first seen in. A key never moves between buckets,
+	 * because each bucket's floor would then hold its earlier total while the
+	 * new bucket counted it again.
+	 */
+	private bucketOf = new Map<string, "agent" | "descendant" | "orphan">();
 	/** The last known total, reaped total and parent per key, for exits. */
 	private lastTotal = new Map<string, number>();
 	private lastReaped = new Map<string, number>();
@@ -153,7 +159,8 @@ export class SessionLedger {
 					(m.rows.has(parent) || (this.lastReaped.get(parent) ?? 0) >= (departed ?? 0) - 1e-9);
 				const ownedBySession = parentIsMember && parentHasIt;
 				if (departed !== undefined && !ownedBySession) {
-					if (taggedKeys.has(key) && !this.everInTree.has(key)) taggedOrphanCpuS += departed;
+					const bucket = this.bucketOf.get(key) ?? (taggedKeys.has(key) && !this.everInTree.has(key) ? "orphan" : "descendant");
+					if (bucket === "orphan") taggedOrphanCpuS += departed;
 					else descendantCpuS += departed;
 				}
 				continue;
@@ -173,14 +180,15 @@ export class SessionLedger {
 			if (row.pid === this.agentPid) {
 				agentCpuS += own;
 				descendantCpuS += total - own;
-			} else if (m.tagged.has(key) && !m.tree.has(key) && !this.everInTree.has(key)) {
-				// A process that was ever a tree member stays in the descendant
-				// bucket, because its earlier contribution is held by that
-				// bucket's floor.
-				taggedOrphanCpuS += total;
-			} else {
-				descendantCpuS += total;
+				continue;
 			}
+			let bucket = this.bucketOf.get(key);
+			if (bucket === undefined) {
+				bucket = m.tagged.has(key) && !m.tree.has(key) && !this.everInTree.has(key) ? "orphan" : "descendant";
+				this.bucketOf.set(key, bucket);
+			}
+			if (bucket === "orphan") taggedOrphanCpuS += total;
+			else descendantCpuS += total;
 		}
 		// Each bucket only grows, which guards the cases the carry cannot see,
 		// such as a read that fails while a live member's total is lower.
