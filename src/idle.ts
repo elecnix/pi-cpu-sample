@@ -32,6 +32,8 @@ export interface IdleVerdict {
 }
 
 const DEFAULT_MAX_IDLE_RATE = 0.005;
+/** Longest window the idle rate averages over, in seconds. */
+const MAX_RATE_WINDOW_S = 30;
 /** CPU-s a descendant must use in one check before the session counts as busy. */
 const MIN_BUSY_CPU_S = 0.05;
 
@@ -72,7 +74,8 @@ export class IdleTracker {
 		if (fresh) return { idle: false, reason: "new descendant" };
 		// Both a floor and a rate: a quick check after waking has no time to
 		// average over, and a long idle gap must not excuse a burst.
-		if (previous !== null && grew > MIN_BUSY_CPU_S && grew > elapsedS * this.maxIdleRate) {
+		const windowS = Math.min(elapsedS, MAX_RATE_WINDOW_S);
+		if (previous !== null && grew > MIN_BUSY_CPU_S && grew > windowS * this.maxIdleRate) {
 			return { idle: false, reason: `descendants used ${grew.toFixed(2)} CPU-s` };
 		}
 		if (alive !== null) return { idle: false, reason: `pid ${alive} outside the tree is alive` };

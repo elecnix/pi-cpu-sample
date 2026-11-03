@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Sampler, type ProcTable, type ProcRow, type ProcCpu, type RawDockerSnapshot } from "../src/sample.js";
+import { Sampler } from "../src/sample.js";
+import type { ContainerObs, RawDockerSnapshot } from "../src/ledger.js";
+import type { ProcCpu, ProcRow, ProcTable } from "../src/types.js";
 
 /** A process table built from a literal list; rusage comes from a map. */
 class FakeTable implements ProcTable {
@@ -22,6 +24,14 @@ class FakeTable implements ProcTable {
 		const out = new Map<number, string | null>();
 		for (const pid of pids) out.set(pid, this.tags.get(pid) ?? null);
 		return out;
+	}
+
+	childPids(pid: number): number[] {
+		return this.rowsIn.filter((r) => r.ppid === pid).map((r) => r.pid);
+	}
+
+	row(pid: number): ProcRow | null {
+		return this.rowsIn.find((r) => r.pid === pid) ?? null;
 	}
 }
 

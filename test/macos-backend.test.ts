@@ -18,7 +18,7 @@ describe("MacOSTable (real OS)", () => {
 		const me = rows!.find((r) => r.pid === process.pid);
 		assert.ok(me, "this process should be in the table");
 		assert.equal(me!.ppid, process.ppid);
-		assert.equal(me!.uid, process.getuid());
+		assert.equal(me!.uid, process.getuid?.());
 		assert.ok(me!.startSec > 1_600_000_000 && me!.startSec <= Date.now() / 1000 + 5);
 		assert.ok(me!.comm.length > 0);
 	});

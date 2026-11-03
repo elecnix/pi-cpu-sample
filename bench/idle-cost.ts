@@ -24,17 +24,16 @@ class IdleSession implements IdleProbe {
 	constructor(private table: MacOSTable) {}
 
 	/**
-	 * One real child listing, then one real single-pid lookup per child. The
-	 * listing runs on this process, which has no children, so it costs what the
-	 * production probe costs at its cheapest; the two children and their CPU
-	 * figures are synthetic.
+	 * One real child listing, then one real rusage read per child, which is what
+	 * `Sampler.descendants` pays. The listing runs on this process, which has no
+	 * children; the two children and their CPU figures are synthetic.
 	 */
 	descendants() {
 		const listed = this.table.childPids(process.pid);
 		if (listed === null) return null;
 		return CHILDREN.map((pid) => {
-			this.table.row(process.pid);
-			return { key: `${pid}:1700000000:0`, pid, cpuS: 1.5 };
+			const ru = this.table.rusage(process.pid);
+			return { key: `${pid}:1700000000:0`, pid, cpuS: ru ? ru.own + ru.reaped : 1.5 };
 		});
 	}
 	trackedKeys(): Set<string> {

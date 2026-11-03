@@ -85,7 +85,22 @@ describe("SessionLedger", () => {
 		assert.equal(buckets.taggedOrphanCpuS, 4);
 	});
 
-	it("carries the last known value forward when a rusage read fails", () => {
+	it("does not add a vanished child's time twice when its parent reaped it", () => {
+		// The table still lists the child, but the rusage read fails because its
+		// parent reaped it between the two calls. The parent's reaped total now
+		// includes the child's time, so the child must add nothing of its own.
+		const ledger = new SessionLedger(100, new Set());
+		ledger.consume([row(100, 0), row(101, 100)], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 0)],
+		]));
+		const after = ledger.consume([row(100, 0), row(101, 100)], new Set(), new Map([
+			[100, cpu(10, 2)],
+		]));
+		assert.equal(after.descendantCpuS, 2);
+	});
+
+	it("keeps the total when a rusage read fails", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const rows = [row(100, 0), row(101, 100)];
 		const first = new Map<number, ProcCpu>([

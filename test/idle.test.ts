@@ -15,7 +15,7 @@ class FakeProbe implements IdleProbe {
 	tracked = new Set<string>(); // "pid:startSec:startUsec" of members outside the tree
 	constructor(readonly agentPid: number) {}
 
-	descendants(): { key: string; pid: number; cpuS: number }[] {
+	descendants(): { key: string; pid: number; cpuS: number }[] | null {
 		const byParent = new Map<number, ProcRow[]>();
 		for (const r of this.rowsIn) byParent.set(r.ppid, [...(byParent.get(r.ppid) ?? []), r]);
 		const out: { key: string; pid: number; cpuS: number }[] = [];
@@ -82,6 +82,18 @@ describe("IdleTracker.check", () => {
 		assert.equal(tracker.check(30_000).idle, false);
 	});
 
+	it("is busy after a long gap with real work in it", () => {
+		// The rate is averaged over a normal check, not over a ten-minute gap
+		// that would let a burst sit under the threshold.
+		const probe = new FakeProbe(100);
+		probe.rowsIn = [row(101, 100)];
+		probe.usage.set(101, { own: 1, reaped: 0 });
+		const tracker = new IdleTracker(probe);
+		tracker.check(0);
+		probe.usage.set(101, { own: 2, reaped: 0 }); // 1 CPU-s over 600 s
+		assert.equal(tracker.check(600_000).idle, false);
+	});
+
 	it("is busy while a tagged process outside the tree is alive", () => {
 		const probe = new FakeProbe(100);
 		probe.rowsIn = [row(300, 1)];
@@ -122,29 +134,6 @@ describe("IdleTracker.check", () => {
 	});
 });
 
-/** A sampler whose tick resolves only when the test says so. */
-class GatedSampler {
-	active = 0;
-	maxActive = 0;
-	private gates: Array<() => void> = [];
-	tick(): Promise<SampleRecord> {
-		this.active += 1;
-		this.maxActive = Math.max(this.maxActive, this.active);
-		return new Promise<SampleRecord>((resolve) => {
-			this.gates.push(() => {
-				this.active -= 1;
-				resolve(record());
-			});
-		});
-	}
-	release(): void {
-		this.gates.shift()?.();
-	}
-	get waiting(): number {
-		return this.gates.length;
-	}
-}
-
 let seq = 0;
 function record(): SampleRecord {
 	return {
@@ -171,13 +160,6 @@ function record(): SampleRecord {
 }
 
 describe("Pacer", () => {
-	function pacerFor(sampler: GatedSampler, idle: () => boolean) {
-		const appended: SampleRecord[] = [];
-		const sink: SampleSink = (rec) => appended.push(rec);
-		const tracker = { check: () => ({ idle: idle(), reason: idle() ? "quiet" : "turn" }) };
-		return { pacer: new Pacer(sampler, sink, tracker), appended };
-	}
-
 	function deferred(): { promise: Promise<SampleRecord>; resolve: () => void } {
 		let release: (rec: SampleRecord) => void = () => {};
 		const promise = new Promise<SampleRecord>((resolve) => {
@@ -186,146 +168,166 @@ describe("Pacer", () => {
 		return { promise, resolve: () => release(record()) };
 	}
 
-	it("never overlaps two ticks", async () => {
-		const first = deferred();
-		const second = deferred();
-		let calls = 0;
-		let active = 0;
-		let maxActive = 0;
+	/** A pacer over a sampler that answers one deferred per tick, with a switchable verdict. */
+	function rig() {
 		const sampler = {
-			tick: () => {
-				active += 1;
-				maxActive = Math.max(maxActive, active);
-				const d = calls++ === 0 ? first : second;
-				return d.promise.finally(() => {
-					active -= 1;
+			pending: [] as Array<() => void>,
+			live: 0,
+			maxLive: 0,
+			tick(): Promise<SampleRecord> {
+				this.live += 1;
+				this.maxLive = Math.max(this.maxLive, this.live);
+				return new Promise<SampleRecord>((resolve) => {
+					this.pending.push(() => {
+						this.live -= 1;
+						resolve(record());
+					});
 				});
 			},
+			release(): void {
+				this.pending.shift()?.();
+			},
+			get waiting(): number {
+				return this.pending.length;
+			},
 		};
-		const tracker = { check: () => ({ idle: false, reason: "turn" }) };
-		const pacer = new Pacer(sampler, () => {}, tracker);
-		const a = pacer.tick();
-		const b = pacer.tick();
+		const state = { idle: false };
+		const appended: SampleRecord[] = [];
+		const tracker = { check: () => ({ idle: state.idle, reason: state.idle ? "quiet" : "turn" }) };
+		const pacer = new Pacer(sampler, (rec) => appended.push(rec), tracker);
+		return { sampler, state, appended, pacer };
+	}
+
+	it("never overlaps two ticks", async () => {
+		const r = rig();
+		const a = r.pacer.tick();
+		const b = r.pacer.tick();
 		await Promise.resolve();
 		await Promise.resolve();
-		assert.equal(calls, 1, "the second tick waits for the first");
-		first.resolve();
+		assert.equal(r.sampler.pending.length, 1, "the second tick waits for the first");
+		r.sampler.release();
 		await a;
 		await Promise.resolve();
 		await Promise.resolve();
-		assert.equal(calls, 2);
-		second.resolve();
+		assert.equal(r.sampler.pending.length, 1);
+		r.sampler.release();
 		await b;
-		assert.equal(maxActive, 1);
+		assert.equal(r.sampler.maxLive, 1);
 	});
 
-	it("samples while busy and skips the sample once idle", async () => {
-		let idle = false;
-		const sampler = new GatedSampler();
-		const { pacer, appended } = pacerFor(sampler, () => idle);
-		const busy = pacer.tick();
+	it("samples while busy", async () => {
+		const r = rig();
+		const ticked = r.pacer.tick();
 		await Promise.resolve();
-		sampler.release();
+		assert.equal(r.sampler.waiting, 1);
+		r.sampler.release();
+		await ticked;
+		assert.equal(r.appended.length, 1);
+	});
+
+	it("writes one last sample when the turn ends, then pauses", async () => {
+		const r = rig();
+		const busy = r.pacer.tick();
+		await Promise.resolve();
+		r.sampler.release();
 		await busy;
-		assert.equal(appended.length, 1);
+		assert.equal(r.appended.length, 1);
 
-		idle = true;
-		await pacer.tick();
-		assert.equal(appended.length, 1);
-		assert.equal(sampler.waiting, 0);
+		// The turn ended after that sample: the sample covering its tail is
+		// written before the pause.
+		r.state.idle = true;
+		const idleTick = r.pacer.tick();
+		await Promise.resolve();
+		assert.equal(r.sampler.waiting, 1);
+		r.sampler.release();
+		await idleTick;
+		assert.equal(r.appended.length, 2);
+
+		// Paused now: a later idle tick writes nothing.
+		await r.pacer.tick();
+		assert.equal(r.appended.length, 2);
 	});
 
-	it("takes one sample on waking from idle", async () => {
-		let idle = true;
-		const sampler = new GatedSampler();
-		const { pacer, appended } = pacerFor(sampler, () => idle);
-		await pacer.tick();
-		assert.equal(appended.length, 0);
-
-		idle = false;
-		const woken = pacer.wake();
+	it("samples at once on waking from idle", async () => {
+		const r = rig();
+		r.state.idle = true;
+		const base = r.pacer.tick(); // the baseline sample, then pause
 		await Promise.resolve();
-		sampler.release();
+		r.sampler.release();
+		await base;
+		assert.equal(r.appended.length, 1);
+		await r.pacer.tick(); // paused
+		assert.equal(r.appended.length, 1);
+
+		r.state.idle = false;
+		const woken = r.pacer.wake();
+		await Promise.resolve();
+		r.sampler.release();
 		await woken;
-		assert.equal(appended.length, 1);
+		assert.equal(r.appended.length, 2);
 	});
 
 	it("waits for an in-flight tick before the final sample on stop", async () => {
-		const inflight = deferred();
-		const final = deferred();
-		let calls = 0;
-		let active = 0;
-		let maxActive = 0;
-		const appended: SampleRecord[] = [];
-		const sampler = {
-			tick: () => {
-				active += 1;
-				maxActive = Math.max(maxActive, active);
-				const d = calls++ === 0 ? inflight : final;
-				return d.promise.finally(() => {
-					active -= 1;
-				});
-			},
-		};
-		const tracker = { check: () => ({ idle: false, reason: "turn" }) };
-		const pacer = new Pacer(sampler, (rec) => appended.push(rec), tracker);
-		const ticked = pacer.tick();
+		const r = rig();
+		const ticked = r.pacer.tick();
 		await Promise.resolve();
-		const stopped = pacer.stop();
+		const stopped = r.pacer.stop();
 		await Promise.resolve();
 		await Promise.resolve();
-		assert.equal(calls, 1, "the shutdown sample waits for the tick in flight");
-		inflight.resolve();
+		assert.equal(r.sampler.waiting, 1, "the shutdown sample waits for the tick in flight");
+		r.sampler.release();
 		await ticked;
 		await Promise.resolve();
 		await Promise.resolve();
-		assert.equal(calls, 2);
-		final.resolve();
+		assert.equal(r.sampler.waiting, 1);
+		r.sampler.release();
 		await stopped;
-		assert.equal(maxActive, 1);
-		assert.equal(appended.length, 2);
+		assert.equal(r.sampler.maxLive, 1);
+		assert.equal(r.appended.length, 2);
 	});
 
 	it("writes one more sample when the turn ends during a sample", async () => {
-		const sampler = new GatedSampler();
-		const appended: SampleRecord[] = [];
-		let calls = 0;
+		const r = rig();
+		let checks = 0;
 		// Busy on the first check, idle once the sample has run.
-		const tracker = { check: () => (calls++ === 0 ? { idle: false, reason: "turn" } : { idle: true, reason: "quiet" }) };
-		const pacer = new Pacer(sampler, (rec) => appended.push(rec), tracker);
+		const tracker = { check: () => (checks++ === 0 ? { idle: false, reason: "turn" } : { idle: true, reason: "quiet" }) };
+		const pacer = new Pacer(r.sampler, (rec) => r.appended.push(rec), tracker);
 		const ticked = pacer.tick();
 		await Promise.resolve();
-		sampler.release(); // the first sample
+		r.sampler.release(); // the first sample
 		await Promise.resolve();
 		await Promise.resolve();
-		assert.equal(appended.length, 1);
-		assert.equal(sampler.waiting, 1, "the second sample starts once the first resolves");
-		sampler.release();
+		assert.equal(r.appended.length, 1);
+		assert.equal(r.sampler.waiting, 1, "the second sample starts once the first resolves");
+		r.sampler.release();
 		await ticked;
-		assert.equal(appended.length, 2);
+		assert.equal(r.appended.length, 2);
 	});
 
 	it("reports itself stopped once stop ran", async () => {
-		const sampler = new GatedSampler();
-		const { pacer } = pacerFor(sampler, () => false);
-		assert.equal(pacer.isStopped, false);
-		const ticked = pacer.tick();
+		const r = rig();
+		assert.equal(r.pacer.isStopped, false);
+		const ticked = r.pacer.tick();
 		await Promise.resolve();
-		sampler.release();
+		r.sampler.release();
 		await ticked;
-		const stopped = pacer.stop();
+		const stopped = r.pacer.stop();
 		await Promise.resolve();
-		sampler.release();
+		r.sampler.release();
 		await stopped;
-		assert.equal(pacer.isStopped, true);
+		assert.equal(r.pacer.isStopped, true);
 	});
 
 	it("writes no final sample when the session was already idle", async () => {
-		const sampler = new GatedSampler();
-		const { pacer, appended } = pacerFor(sampler, () => true);
-		await pacer.tick();
-		await pacer.stop();
-		assert.equal(appended.length, 0);
-		assert.equal(sampler.maxActive, 0);
+		const r = rig();
+		r.state.idle = true;
+		const base = r.pacer.tick(); // the baseline, then pause
+		await Promise.resolve();
+		r.sampler.release();
+		await base;
+		const before = r.appended.length;
+		const stopped = r.pacer.stop();
+		await stopped;
+		assert.equal(r.appended.length, before);
 	});
 });

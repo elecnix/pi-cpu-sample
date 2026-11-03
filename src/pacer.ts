@@ -37,7 +37,12 @@ export class Pacer {
 			if (this.stopped) return;
 			const verdict = this.tracker.check();
 			if (verdict.idle) {
-				if (this.active) this.log(`paused: ${verdict.reason}`);
+				// The turn ended after the last sample. One more sample covers its
+				// tail; without it, shutdown skips the interval entirely.
+				if (this.active) {
+					await this.sample();
+					this.log(`paused: ${verdict.reason}`);
+				}
 				this.active = false;
 				return;
 			}

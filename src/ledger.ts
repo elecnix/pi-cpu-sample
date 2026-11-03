@@ -7,7 +7,6 @@
  * each process's time is counted exactly once, because reaped time only
  * covers processes that have already left the table. The reader subtracts
  * consecutive samples, so the ledger only has to keep the sum from dipping:
- * a process whose rusage read fails carries its last known value forward, and
  * each bucket never reports less than it did on the previous tick.
  *
  * That floor is what holds a departed member's time. A process reaped by its
@@ -100,9 +99,6 @@ export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: S
 }
 
 export class SessionLedger {
-	/** Last known totals per key, for reads that fail this tick. */
-	private lastTotal = new Map<string, number>();
-	private lastOwn = new Map<string, number>();
 	/** The last reported bucket totals; each bucket only ever grows. */
 	private lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0 };
 
@@ -128,18 +124,12 @@ export class SessionLedger {
 		for (const key of sessionKeys) {
 			const row = m.rows.get(key);
 			if (!row) continue; // gone; the bucket floor below holds its time
+			// A failed read adds nothing. The process either comes back on the next
+			// tick, or another member's reaped total picked up its time, or the
+			// bucket floor below holds the total.
 			const ru = usage.get(row.pid) ?? null;
-			let total: number;
-			let own: number;
-			if (ru) {
-				total = ru.own + ru.reaped;
-				own = ru.own;
-				this.lastTotal.set(key, total);
-				this.lastOwn.set(key, own);
-			} else {
-				total = this.lastTotal.get(key) ?? 0;
-				own = this.lastOwn.get(key) ?? 0;
-			}
+			const total = ru ? ru.own + ru.reaped : 0;
+			const own = ru ? ru.own : 0;
 			procs.push({ name: row.comm, pid: row.pid, cpuS: total });
 			if (row.pid === this.agentPid) {
 				agentCpuS += own;
@@ -165,6 +155,12 @@ export class SessionLedger {
 			procsTruncated: procs.length > PROC_LIST_CAP,
 		};
 	}
+}
+
+/** What a tick's Docker read returns. */
+export interface RawDockerSnapshot {
+	ok: boolean;
+	containers: ContainerObs[];
 }
 
 export interface ContainerObs {
