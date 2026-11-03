@@ -92,11 +92,15 @@ export default function (pi: ExtensionAPI) {
 		timer = null;
 		delete process.env.CPU_SAMPLE_SESSION;
 		const pacer = current;
+		const ctx = liveCtx;
 		try {
 			if (pacer && !killSwitchActive({ dir: disableDir(homedir()), env: process.env })) await pacer.stop();
 		} finally {
-			current = null;
-			liveCtx = null;
+			// stop() awaits an in-flight tick, which can include a Docker read. A
+			// session started during that await owns a new pacer, and this
+			// handler must not clear it.
+			if (current === pacer) current = null;
+			if (liveCtx === ctx) liveCtx = null;
 		}
 	});
 }

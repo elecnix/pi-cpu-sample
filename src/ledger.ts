@@ -134,7 +134,10 @@ export class SessionLedger {
 			if (row.pid === this.agentPid) {
 				agentCpuS += own;
 				descendantCpuS += total - own;
-			} else if (m.tagged.has(key) && !m.tree.has(key)) {
+			} else if (m.tagged.has(key) && !m.tree.has(key) && !this.everInTree.has(key)) {
+				// A process that was ever a tree member stays in the descendant
+				// bucket, because its earlier contribution is held by that
+				// bucket's floor.
 				taggedOrphanCpuS += total;
 			} else {
 				descendantCpuS += total;

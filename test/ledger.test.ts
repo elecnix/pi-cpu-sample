@@ -131,6 +131,25 @@ describe("SessionLedger", () => {
 		assert.equal(buckets.descendantCpuS, 7);
 	});
 
+	it("counts a tagged process that started in the tree only once", () => {
+		// A member can carry the tag and still have started inside the tree. If
+		// it moved to the orphan bucket when it was reparented, its earlier
+		// contribution would stay in the descendant floor and its whole total
+		// would be added again.
+		const ledger = new SessionLedger(100, new Set());
+		const key = "101:1700000101:0";
+		const tagged = new Set([key]);
+		ledger.consume([row(100, 0), row(101, 100)], tagged, new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 0)],
+		]));
+		const after = ledger.consume([row(100, 0), row(101, 1)], tagged, new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(3, 0)],
+		]));
+		assert.equal(after.descendantCpuS + after.taggedOrphanCpuS, 3);
+	});
+
 	it("keeps a reparented session member after it leaves the tree", () => {
 		const ledger = new SessionLedger(100, new Set());
 		// 101 starts inside the tree, then its parent exits and it is reparented.

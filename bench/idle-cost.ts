@@ -24,15 +24,18 @@ class IdleSession implements IdleProbe {
 	constructor(private table: MacOSTable) {}
 
 	/**
-	 * One real child listing, then one real rusage read per child, which is what
-	 * `Sampler.descendants` pays. The listing runs on this process, which has no
-	 * children; the two children and their CPU figures are synthetic.
+	 * The calls `Sampler.descendants` makes: one child listing for the agent,
+	 * then a row lookup, a rusage read and a child listing for every child. The
+	 * kernel calls run on this process, which has no children; the two children
+	 * and their CPU figures are synthetic.
 	 */
 	descendants() {
 		const listed = this.table.childPids(process.pid);
 		if (listed === null) return null;
 		return CHILDREN.map((pid) => {
+			this.table.row(process.pid);
 			const ru = this.table.rusage(process.pid);
+			this.table.childPids(process.pid);
 			return { key: `${pid}:1700000000:0`, pid, cpuS: ru ? ru.own + ru.reaped : 1.5 };
 		});
 	}

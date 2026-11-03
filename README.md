@@ -41,11 +41,11 @@ Counters are cumulative, so a pause keeps the totals exact. Pause and resume bra
 
 | What | CPU per tick, 30 s ticks | CPU per hour |
 | --- | --- | --- |
-| Idle check, 1 session | 33 us | 0.0039 s |
-| Idle check, 20 sessions | 702 us, 35 us each | 0.084 s |
+| Idle check, 1 session | 94 us | 0.011 s |
+| Idle check, 20 sessions | 1.6 ms, 82 us each | 0.20 s |
 | Full sample, Docker stubbed out | 9 to 18 ms | 1.1 to 2.1 s |
 
-Fifty idle sessions use about 0.20 CPU-seconds an hour. Fifty sampling sessions use 55 to 105.
+Fifty idle sessions use about 0.6 CPU-seconds an hour. Fifty sampling sessions use 55 to 105.
 
 Sessions that pause stop watching their Docker stacks. A stack that keeps running after its turn ends counts toward the session that started it only until the idle began, and the reader's own snapshots record the rest as an unowned stack.
 
