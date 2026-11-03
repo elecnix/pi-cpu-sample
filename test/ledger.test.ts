@@ -201,6 +201,26 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.taggedOrphanCpuS, 4);
 	});
 
+	it("does not double count a tagged child reaped by a tagged parent", () => {
+		// Both processes live outside the agent's tree. The child exits first,
+		// then its parent reaps it, which raises the parent's reaped total. The
+		// child's time must not also be carried on its own key.
+		const ledger = new SessionLedger(100, new Set());
+		const parentKey = "300:1700000300:0";
+		const childKey = "301:1700000301:0";
+		const keys = new Set([parentKey, childKey]);
+		ledger.consume([row(100, 0), row(300, 1), row(301, 300)], keys, new Map([
+			[100, cpu(10, 0)],
+			[300, cpu(2, 0)],
+			[301, cpu(5, 0)],
+		]));
+		const after = ledger.consume([row(100, 0), row(300, 1)], keys, new Map([
+			[100, cpu(10, 0)],
+			[300, cpu(2, 5)],
+		]));
+		assert.equal(after.taggedOrphanCpuS, 7);
+	});
+
 	it("does not carry a tagged process that a session parent reaped", () => {
 		const ledger = new SessionLedger(100, new Set());
 		// 101 is tagged but starts inside the tree, so a session process owns
@@ -219,21 +239,19 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.descendantCpuS, 4);
 	});
 
-	it("does not carry a departed reparented member twice", () => {
+	it("holds a reparented member's last total after it exits", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const child = row(101, 100);
 		ledger.consume([row(100, 0), child], new Set(), new Map([
 			[100, cpu(10, 0)],
 			[101, cpu(3, 0)],
 		]));
-		// The child reparented to launchd, then exited while still outside the tree.
+		// The child reparented to launchd, so the agent never reports its exit.
 		ledger.consume([row(100, 0), row(101, 1)], new Set(), new Map([
 			[100, cpu(10, 0)],
 			[101, cpu(5, 0)],
 		]));
-		// Its time is already inside its original parent's reaped total, so
-		// carrying it here as well would count it twice.
 		const after = ledger.consume([row(100, 0)], new Set(), new Map([[100, cpu(10, 0)]]));
-		assert.equal(after.descendantCpuS, 0);
+		assert.equal(after.descendantCpuS, 5);
 	});
 });

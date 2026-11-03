@@ -29,7 +29,10 @@ describe("parseEnvRecords", () => {
 	});
 
 	it("skips a line that is not a record without joining it to the previous pid", () => {
-		const text = [record(10, "node app FOO=1"), "12345 looks like a pid", record(20, "x")].join("\n");
+		// The stray line carries a tag. A parser that joined it onto pid 10's
+		// record would report that tag for pid 10; skipping it leaves pid 10
+		// untagged, which is the behavior under test.
+		const text = [record(10, "node app FOO=1"), "12345 CPU_SAMPLE_SESSION=pi:stray", record(20, "x")].join("\n");
 		const out = parseEnvRecords(text, [10, 20]);
 		assert.equal(out.get(10), null);
 		assert.equal(out.get(20), null);

@@ -28,6 +28,7 @@ export default function (pi: ExtensionAPI) {
 	/** The pacer of the running session, or null between sessions. */
 	let current: Pacer | null = null;
 	let liveCtx: ExtensionContext | null = null;
+	let timer: ReturnType<typeof setInterval> | null = null;
 	let turnOpen = false;
 	let wakeScheduled = false;
 
@@ -77,23 +78,25 @@ export default function (pi: ExtensionAPI) {
 		const tracker = new IdleTracker(sampler, () => turnOpen || liveCtx?.isIdle() === false);
 		const log = (message: string) => console.error(`[pi-cpu-sample] ${message}`);
 		const pacer = new Pacer(sampler, (rec) => pi.appendEntry("cpu-sample", rec), tracker, log);
-		const timer = setInterval(() => void pacer.tick(), INTERVAL_MS);
+		timer = setInterval(() => void pacer.tick(), INTERVAL_MS);
 		timer.unref();
 		current = pacer;
 		// The first sample is the baseline; every later sample subtracts from it.
 		void pacer.tick();
+	});
 
-		pi.on("session_shutdown", async () => {
-			clearInterval(timer);
-			delete process.env.CPU_SAMPLE_SESSION;
-			try {
-				if (!killSwitchActive({ dir: disableDir(homedir()), env: process.env })) await pacer.stop();
-			} finally {
-				// A stopped pacer must not block the next session's start if this
-				// instance sees one before its shutdown returns.
-				if (current === pacer) current = null;
-				if (liveCtx === ctx) liveCtx = null;
-			}
-		});
+	// Registered once, so a second session in the same process cannot stack
+	// another copy of it beside the first.
+	pi.on("session_shutdown", async () => {
+		if (timer) clearInterval(timer);
+		timer = null;
+		delete process.env.CPU_SAMPLE_SESSION;
+		const pacer = current;
+		try {
+			if (pacer && !killSwitchActive({ dir: disableDir(homedir()), env: process.env })) await pacer.stop();
+		} finally {
+			current = null;
+			liveCtx = null;
+		}
 	});
 }

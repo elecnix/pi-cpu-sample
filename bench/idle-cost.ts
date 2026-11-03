@@ -4,12 +4,12 @@
  *
  * Run with `npm run bench:idle`. Each "idle session" is an IdleTracker over a
  * process tree shaped like an idle Claude Code session: two quiet children,
- * which is what its MCP servers look like between turns. The child listing
- * costs one real `proc_listchildpids` call per process, the same work the
- * production probe does; only the rows and the CPU figures are synthetic, so
- * the number does not drift with this machine's process table. The full sample
- * runs the real sampler with Docker stubbed out, so it reports process-table
- * cost alone.
+ * which is what its MCP servers look like between turns. Every check pays one
+ * real `proc_listchildpids` call and one real `proc_pid_rusage` call per child,
+ * the same kernel work the production probe does; only the identities and the
+ * CPU figures are synthetic, so the number does not drift with this machine's
+ * process table. The full sample runs the real sampler with Docker stubbed out,
+ * so it reports process-table cost alone.
  */
 
 import { MacOSTable } from "../src/macos.js";
@@ -21,32 +21,27 @@ const CHILDREN = [424243, 424244];
 
 /** An idle session: two quiet children, no member outside the tree. */
 class IdleSession implements IdleProbe {
-	private rowCache = CHILDREN.map((pid) => ({
-		pid,
-		ppid: AGENT_PID,
-		uid: -1,
-		comm: "node",
-		startSec: 1_700_000_000,
-		startUsec: 0,
-	}));
 	constructor(private table: MacOSTable) {}
 
 	/**
-	 * The agent's children. The listing is a real `proc_listchildpids` call, so
-	 * it costs what the production probe costs; the agent pid is synthetic, and
-	 * the kernel answers zero children for a pid that does not exist, which is
-	 * the shape of an idle session.
+	 * One real child listing, then one real single-pid lookup per child. The
+	 * listing runs on this process, which has no children, so it costs what the
+	 * production probe costs at its cheapest; the two children and their CPU
+	 * figures are synthetic.
 	 */
 	descendants() {
-		const listed = this.table.childPids(AGENT_PID);
+		const listed = this.table.childPids(process.pid);
 		if (listed === null) return null;
-		return listed.map((pid) => ({ key: `${pid}:1700000000:0`, pid, cpuS: 1.5 }));
+		return CHILDREN.map((pid) => {
+			this.table.row(process.pid);
+			return { key: `${pid}:1700000000:0`, pid, cpuS: 1.5 };
+		});
 	}
 	trackedKeys(): Set<string> {
 		return new Set();
 	}
 	row(pid: number) {
-		return this.rowCache.find((r) => r.pid === pid) ?? null;
+		return this.table.row(pid);
 	}
 }
 

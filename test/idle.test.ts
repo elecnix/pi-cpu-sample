@@ -286,6 +286,25 @@ describe("Pacer", () => {
 		assert.equal(appended.length, 2);
 	});
 
+	it("writes one more sample when the turn ends during a sample", async () => {
+		const sampler = new GatedSampler();
+		const appended: SampleRecord[] = [];
+		let calls = 0;
+		// Busy on the first check, idle once the sample has run.
+		const tracker = { check: () => (calls++ === 0 ? { idle: false, reason: "turn" } : { idle: true, reason: "quiet" }) };
+		const pacer = new Pacer(sampler, (rec) => appended.push(rec), tracker);
+		const ticked = pacer.tick();
+		await Promise.resolve();
+		sampler.release(); // the first sample
+		await Promise.resolve();
+		await Promise.resolve();
+		assert.equal(appended.length, 1);
+		assert.equal(sampler.waiting, 1, "the second sample starts once the first resolves");
+		sampler.release();
+		await ticked;
+		assert.equal(appended.length, 2);
+	});
+
 	it("reports itself stopped once stop ran", async () => {
 		const sampler = new GatedSampler();
 		const { pacer } = pacerFor(sampler, () => false);

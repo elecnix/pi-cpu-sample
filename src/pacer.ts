@@ -48,6 +48,7 @@ export class Pacer {
 			// moment the session stopped working.
 			const after = this.tracker.check();
 			if (after.idle) {
+				await this.sample();
 				this.log(`paused: ${after.reason}`);
 				this.active = false;
 			}
