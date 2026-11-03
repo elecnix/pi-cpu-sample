@@ -33,7 +33,7 @@ A session is idle when all of these hold:
 - the agent's descendants are the same processes as at the last check, and together they used less than half a percent of one core between the two checks;
 - every session member outside the agent's tree, tagged or reparented, has exited. The check reads the pid as alive or gone. macOS 27 doesn't report a process start time, so a pid that changed hands since the last sample also reads as alive. The session then samples once more.
 
-An idle session skips the process table and Docker entirely. The resume check runs every 30 seconds. It looks at one process at a time, `proc_listchildpids` on macOS or one `/proc/<pid>/task/<pid>/children` read on Linux, and it stops at the first process with no children.
+An idle session skips the process table and Docker entirely. The resume check runs every 30 seconds. It walks the agent's children one process at a time, `proc_listchildpids` on macOS or one `/proc/<pid>/task/<pid>/children` read on Linux, and it stops descending at any process that has no children.
 
 Waking is immediate. pi emits `agent_start` before a turn does any work, and the sampler takes a full sample then.
 

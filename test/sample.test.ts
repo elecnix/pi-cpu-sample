@@ -343,10 +343,40 @@ describe("Sampler.tick with an in-process sampler", () => {
 });
 
 describe("read order", () => {
-	it("reads a parent's CPU before its children's", () => {
+	it("reads a parent's CPU before its children's in a tick", () => {
 		// The rusage reads are separate calls. Reading a parent first means a child
 		// that exits mid-pass is either absent from its own read or already inside
-		// the parent's reaped total, never both.
+		// the parent's reaped total, never both. The table records the order the
+		// sampler actually used.
+		const rows = [row(102, 101), row(101, 100), row(100, 0)];
+		const table = new FakeTable(rows, new Map(rows.map((r) => [r.pid, { own: 1, reaped: 0 }])));
+		const reads: number[] = [];
+		const rusage = table.rusage.bind(table);
+		table.rusage = (pid: number) => {
+			reads.push(pid);
+			return rusage(pid);
+		};
+		const sampler = new Sampler({
+			table,
+			docker: async () => dockerEmpty,
+			agentPid: 100,
+			agent: "pi",
+			session: "pi:s1",
+			cwd: "/w",
+			runId: "r1",
+			selfPid: 999,
+			selfUid: 501,
+		});
+		const ticked = sampler.tick();
+		void ticked;
+		return ticked.then(() => {
+			assert.ok(reads.includes(100) && reads.includes(101) && reads.includes(102));
+			assert.ok(reads.indexOf(100) < reads.indexOf(101), "the agent before its child");
+			assert.ok(reads.indexOf(101) < reads.indexOf(102), "the child before its own child");
+		});
+	});
+
+	it("orders parents before children", () => {
 		const rows = [row(102, 101), row(101, 100), row(100, 0), row(200, 0)];
 		const ordered = byDepth(rows).map((r) => r.pid);
 		assert.ok(ordered.indexOf(100) < ordered.indexOf(101));
