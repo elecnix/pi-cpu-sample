@@ -67,7 +67,11 @@ export class MacOSTable implements ProcTable {
 		const buf = Buffer.alloc(size);
 		rc = this.sysctl(mib, 3, buf, sizeBuf, null, 0);
 		if (rc !== 0) return null;
-		const count = size / KINFO_PROC_SIZE;
+		// The kernel writes back how many bytes it filled. A process that exited
+		// between the two calls shortens the reply, and the size from the first
+		// call would then read the buffer's zeroed tail as pid-0 processes.
+		const filled = Number(sizeBuf.readBigUInt64LE(0));
+		const count = filled > 0 && filled <= size ? Math.floor(filled / KINFO_PROC_SIZE) : size / KINFO_PROC_SIZE;
 		const rows: ProcRow[] = [];
 		for (let i = 0; i < count; i++) {
 			const o = i * KINFO_PROC_SIZE;

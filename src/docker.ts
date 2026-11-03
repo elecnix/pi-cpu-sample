@@ -102,6 +102,10 @@ export class DockerClient {
 					headers: { Host: "docker" },
 				},
 				(res: IncomingMessage) => {
+					// Every reply gets an error listener first: a reset while the
+					// body drains must reject into the caller's skip path, and the
+					// non-200 branch below drains the body too.
+					res.on("error", reject);
 					if (res.statusCode !== 200) {
 						res.resume();
 						reject(new Error(`docker api status ${res.statusCode}`));
@@ -113,9 +117,6 @@ export class DockerClient {
 						body += chunk;
 					});
 					res.on("end", () => resolve(body));
-					// A reset in the middle of a body otherwise surfaces as an
-					// uncaught exception; it belongs to the caller's skip path.
-					res.on("error", reject);
 				},
 			);
 			req.on("timeout", () => {

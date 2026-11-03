@@ -106,6 +106,28 @@ describe("DockerClient", () => {
 		assert.equal(snap.containers.length, 0);
 	});
 
+	it("survives a non-200 reply whose error body is cut off", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "docker-mock-"));
+		const socketPath = join(dir, "docker.sock");
+		const server = createServer((socket: Socket) => {
+			socket.on("data", () => {
+				socket.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4096\r\n\r\n{\"message\":");
+				socket.destroy();
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+		cleanups.push(
+			() =>
+				new Promise<void>((resolve) => {
+					server.close(() => resolve());
+					rmSync(dir, { recursive: true, force: true });
+				}),
+		);
+		const client = new DockerClient(socketPath);
+		const snap = await client.listUnder("/w");
+		assert.equal(snap.ok, false);
+	});
+
 	it("marks the snapshot failed when the socket is missing", async () => {
 		const client = new DockerClient(join(tmpdir(), "no-such-docker-sock"));
 		const snap = await client.listUnder("/w");

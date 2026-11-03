@@ -184,3 +184,38 @@ describe("DockerLedger", () => {
 		assert.equal(sample.stacks.length, 2);
 	});
 });
+
+describe("SessionLedger with members outside the tree", () => {
+	it("keeps an exited tagged orphan's CPU in the total", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const agent = row(100, 0);
+		// A tagged daemon that is not a descendant: launchd owns it, so no
+		// session parent folds its time into a reaped total when it exits.
+		const orphan = row(300, 1);
+		const key = "300:1700000300:0";
+		ledger.consume([agent, orphan], new Set([key]), new Map([
+			[100, cpu(10, 0)],
+			[300, cpu(4, 0)],
+		]));
+		const after = ledger.consume([agent], new Set([key]), new Map([[100, cpu(10, 0)]]));
+		assert.equal(after.taggedOrphanCpuS, 4);
+	});
+
+	it("does not carry a departed reparented member twice", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const child = row(101, 100);
+		ledger.consume([row(100, 0), child], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(3, 0)],
+		]));
+		// The child reparented to launchd, then exited while still outside the tree.
+		ledger.consume([row(100, 0), row(101, 1)], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(5, 0)],
+		]));
+		// Its time is already inside its original parent's reaped total, so
+		// carrying it here as well would count it twice.
+		const after = ledger.consume([row(100, 0)], new Set(), new Map([[100, cpu(10, 0)]]));
+		assert.equal(after.descendantCpuS, 0);
+	});
+});

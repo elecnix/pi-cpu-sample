@@ -57,11 +57,19 @@ export class IdleTracker {
 		const alive = this.aliveOutsideTree();
 		const descendants = this.probe.descendants();
 		if (descendants === null) return { idle: false, reason: "cannot enumerate the agent's children" };
-		const total = descendants.reduce((acc, d) => acc + d.cpuS, 0);
 		const elapsedS = this.last === null ? 0 : Math.max(0, (nowMs - this.lastMs) / 1000);
 		const previous = this.last;
 		const fresh = previous === null ? descendants.length > 0 : descendants.some((d) => !previous.has(d.key));
-		const grew = previous === null ? 0 : total - [...previous.values()].reduce((acc, v) => acc + v, 0);
+		// Growth per surviving process. A descendant that exits removes its whole
+		// cumulative total from a plain sum, and that subtraction would cancel a
+		// survivor's work.
+		let grew = 0;
+		if (previous !== null) {
+			for (const d of descendants) {
+				const before = previous.get(d.key);
+				if (before !== undefined && d.cpuS > before) grew += d.cpuS - before;
+			}
+		}
 		this.snapshot(descendants, nowMs);
 		if (fresh) return { idle: false, reason: "new descendant" };
 		// Both a floor and a rate: a quick check after waking has no time to

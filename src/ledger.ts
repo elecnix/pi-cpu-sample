@@ -7,9 +7,11 @@
  * each process's time is counted exactly once, because reaped time only
  * covers processes that have already left the table. The reader subtracts
  * consecutive samples, so the ledger only has to keep the sum from dipping:
- * a process whose rusage read fails carries its last known value forward,
- * and a process that has left the tree stays in the ledger if it was ever a
- * tree member.
+ * a process whose rusage read fails carries its last known value forward, and
+ * so does a member outside the tree once it exits. That exit is permanent, so
+ * its last known value is the cumulative figure for the rest of the run: a
+ * tree member's time is folded into its parent's reaped total, but a process
+ * launchd owns has no session parent to do that.
  */
 
 import { keyOf, type DockerSample, type ProcCpu, type ProcRow, type StackSample } from "./types.js";
@@ -112,7 +114,9 @@ export class SessionLedger {
 	consume(rows: ProcRow[], taggedKeys: Set<string>, usage: Map<number, ProcCpu>): Buckets {
 		const m = classify(rows, this.agentPid, taggedKeys);
 		for (const key of m.tree) this.everInTree.add(key);
-		const sessionKeys = new Set<string>([...m.tree, ...this.everInTree, ...m.tagged]);
+		// `m.tagged` holds only the tagged keys still in the table; the rest come
+		// from the caller's set, so a departed tagged member stays in the sum.
+		const sessionKeys = new Set<string>([...m.tree, ...this.everInTree, ...taggedKeys]);
 		for (const key of m.dockerHost) sessionKeys.delete(key);
 
 		let agentCpuS = 0;
@@ -121,7 +125,19 @@ export class SessionLedger {
 		const procs: { name: string; pid: number; cpuS: number }[] = [];
 		for (const key of sessionKeys) {
 			const row = m.rows.get(key);
-			if (!row) continue;
+			if (!row) {
+				// The member left the table. A process outside the tree has no
+				// session parent to fold its time into a reaped total, so its
+				// last known total stays in the sum for the rest of the run. A
+				// tree member's time is already in its parent's reaped total.
+				const total = this.lastTotal.get(key);
+				if (total !== undefined && !this.everInTree.has(key)) {
+					procs.push({ name: "", pid: Number(key.split(":")[0]), cpuS: total });
+					if (taggedKeys.has(key)) taggedOrphanCpuS += total;
+					else descendantCpuS += total;
+				}
+				continue;
+			}
 			const ru = usage.get(row.pid) ?? null;
 			let total: number;
 			let own: number;
