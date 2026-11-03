@@ -201,6 +201,24 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.taggedOrphanCpuS, 4);
 	});
 
+	it("does not carry a tagged process that a session parent reaped", () => {
+		const ledger = new SessionLedger(100, new Set());
+		// 101 is tagged but starts inside the tree, so a session process owns
+		// its exit and folds the time into a reaped total.
+		const key = "101:1700000101:0";
+		ledger.consume([row(100, 0), row(101, 100)], new Set([key]), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(3, 0)],
+		]));
+		ledger.consume([row(100, 0), row(101, 100)], new Set([key]), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(4, 0)],
+		]));
+		// The parent reaped it; its 4 CPU-s now appear in the parent's reaped time.
+		const after = ledger.consume([row(100, 0)], new Set([key]), new Map([[100, cpu(10, 4)]]));
+		assert.equal(after.descendantCpuS, 4);
+	});
+
 	it("does not carry a departed reparented member twice", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const child = row(101, 100);

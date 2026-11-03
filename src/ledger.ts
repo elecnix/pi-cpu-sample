@@ -11,7 +11,9 @@
  * so does a member outside the tree once it exits. That exit is permanent, so
  * its last known value is the cumulative figure for the rest of the run: a
  * tree member's time is folded into its parent's reaped total, but a process
- * launchd owns has no session parent to do that.
+ * launchd owns has no session parent to do that. Only a process first seen
+ * outside the tree can be carried, because a tagged process inside the tree
+ * may have been reaped by a session parent instead.
  */
 
 import { keyOf, type DockerSample, type ProcCpu, type ProcRow, type StackSample } from "./types.js";
@@ -109,6 +111,8 @@ export class SessionLedger {
 	constructor(
 		private agentPid: number,
 		private everInTree: Set<string>,
+		/** Keys first seen outside the tree; those exits no session parent records. */
+		private firstSeenOutside: Set<string> = new Set(),
 	) {}
 
 	consume(rows: ProcRow[], taggedKeys: Set<string>, usage: Map<number, ProcCpu>): Buckets {
@@ -131,13 +135,14 @@ export class SessionLedger {
 				// last known total stays in the sum for the rest of the run. A
 				// tree member's time is already in its parent's reaped total.
 				const total = this.lastTotal.get(key);
-				if (total !== undefined && !this.everInTree.has(key)) {
+				if (total !== undefined && !this.everInTree.has(key) && this.firstSeenOutside.has(key)) {
 					procs.push({ name: "", pid: Number(key.split(":")[0]), cpuS: total });
 					if (taggedKeys.has(key)) taggedOrphanCpuS += total;
 					else descendantCpuS += total;
 				}
 				continue;
 			}
+			if (!m.tree.has(key)) this.firstSeenOutside.add(key);
 			const ru = usage.get(row.pid) ?? null;
 			let total: number;
 			let own: number;
