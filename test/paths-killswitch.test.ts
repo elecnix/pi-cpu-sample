@@ -28,6 +28,13 @@ describe("isUnder", () => {
 		assert.ok(isUnder("/a/b", "/a/b/"));
 	});
 
+	it("resolves . and .. before the prefix test", () => {
+		assert.ok(!isUnder("/a/b/../etc", "/a/b"));
+		assert.ok(isUnder("/a/b/./sub", "/a/b"));
+		assert.ok(isUnder("/a//b/sub", "/a/b"));
+		assert.ok(isUnder("/a/b/../b/sub", "/a/b"));
+	});
+
 	it("accepts the root under the root", () => {
 		assert.ok(isUnder("/", "/"));
 	});

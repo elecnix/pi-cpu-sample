@@ -9,8 +9,6 @@
 
 import { accessSync, constants } from "node:fs";
 
-export const DISABLE_FILE = "~/.config/cpu-sample/disabled";
-
 export function killSwitchActive(opts: { dir: string; env: Record<string, string | undefined> }): boolean {
 	if (opts.env.CPU_SAMPLE === "off") return true;
 	try {

@@ -4,13 +4,18 @@
 # between them ("the parser reads the schema"), so stacking pushes it to the
 # end, far from its object. Fix by naming the actor and putting its verb next.
 #
-# Every middle token is enumerated and none may be a finite verb, so ordinary
-# subject-verb-object prose can never match. Known miss: the tagger reads a
-# plural noun like "oracles" as VBZ, garden-pathing where a reader does, so
-# "the oracles the gate validates against" slips through. Adding VBZ to the
-# middle catches it, doubles the hit rate, and fires on correct English. This
-# pack gates a hook that blocks an edit before it reaches disk, so a false
-# positive costs more than a miss.
+# The rule needs a verb after the second phrase, which is what separates a
+# stranded verb from a plain noun between two articles: "I gave the man the
+# book" is correct English and must not match. Every middle token is enumerated
+# and none may be a finite verb, so ordinary subject-verb-object prose can
+# never match either.
+#
+# Two known misses. The tagger reads a plural noun like "oracles" as VBZ, so
+# "the oracles the gate validates against" slips through; adding VBZ to the
+# middle catches it, doubles the hit rate, and fires on correct English. And
+# the tagger reads some verbs as plural nouns, so "the file the gate rejects"
+# slips through too. This pack gates a hook that blocks an edit before it
+# reaches disk, so a false positive costs more than a miss.
 extends: sequence
 message: "Stacked articles: '%[1]s ... the'. Two `the` phrases with the verb stranded behind both. Name the actor and put its verb next to it."
 level: error
@@ -20,3 +25,10 @@ tokens:
     min: 2
   - pattern: (?i)the
     target: true
+  # A verb must follow the second phrase, which a stacked article without a
+  # stranded verb ("I gave the man the book") does not have.
+  - pattern: (?i)[a-z][a-z]+
+    tag: JJ|JJR|JJS|NN|NNS|NNP|NNPS|VBN|VBG
+    min: 1
+  - pattern: (?i)[a-z][a-z]+
+    tag: VB|VBZ|VBD|VBP|VBN|VBG|MD
