@@ -80,17 +80,40 @@ export class LinuxTable implements ProcTable {
 	}
 
 	childPids(pid: number): number[] | null {
-		// One small read lists every child; /proc/<pid>/children does the same
-		// and needs no task walk, but it is a kernel option some builds drop.
-		for (const path of [`/proc/${pid}/task/${pid}/children`, `/proc/${pid}/children`]) {
+		// Each task (thread) has its own children file, so a child forked by a
+		// worker thread is only listed under that thread. Union every thread's
+		// list. /proc/<pid>/children answers the same question where a kernel
+		// build provides it, so it is the fallback.
+		const tasks = `/proc/${pid}/task`;
+		let tids: string[];
+		try {
+			tids = readdirSync(tasks);
+		} catch {
+			return null;
+		}
+		const pids = new Set<number>();
+		let read = 0;
+		for (const tid of tids) {
 			try {
-				const text = readFileSync(path, "utf8").trim();
-				return text === "" ? [] : text.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+				const text = readFileSync(`${tasks}/${tid}/children`, "utf8").trim();
+				read += 1;
+				if (text === "") continue;
+				for (const part of text.split(/\s+/)) {
+					const child = Number(part);
+					if (Number.isInteger(child) && child > 0) pids.add(child);
+				}
 			} catch {
-				// Try the next path.
+				// A thread that vanished between the listing and the read, or a
+				// kernel without CONFIG_PROC_CHILDREN.
 			}
 		}
-		return null;
+		if (read === tids.length) return [...pids];
+		try {
+			const text = readFileSync(`/proc/${pid}/children`, "utf8").trim();
+			return text === "" ? [] : text.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+		} catch {
+			return null;
+		}
 	}
 
 	row(pid: number): ProcRow | null {

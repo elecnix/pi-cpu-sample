@@ -22,7 +22,7 @@ describe("LinuxTable (real OS)", () => {
 		assert.ok(rows!.some((r) => r.startUsec !== 0), "some start times carry a sub-second part");
 	});
 
-	itLinux("lists a child forked by a worker thread", async (t) => {
+	itLinux("lists a child forked by a worker thread", async () => {
 		// The task-level children file only covers one thread, so the union is
 		// what makes this child visible.
 		const { Worker } = await import("node:worker_threads");
@@ -44,7 +44,6 @@ describe("LinuxTable (real OS)", () => {
 				}
 			});
 			const listed = new LinuxTable().childPids(process.pid);
-			t.diagnostic(JSON.stringify({ worker: pid, tids: tids.length, files, listed }));
 			assert.ok(listed?.includes(pid), `the worker's child should be listed: ${JSON.stringify({ listed, files })}`);
 		} finally {
 			process.kill(pid, "SIGKILL");
