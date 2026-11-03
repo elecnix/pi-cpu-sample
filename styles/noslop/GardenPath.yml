@@ -48,10 +48,11 @@ tokens:
   - pattern: '(?i)\b[a-z][a-z]+s\b'
     tag: VBZ|VB|VBP
 # A match that begins inside a pronoun-led relative clause is dropped. The
-# class is [a-z\s] rather than [^.!?] so the window cannot cross a comma or
-# a digit into a later clause and suppress an unrelated match; it is
-# uncapped so a long clause is covered as fully as the old TokenIgnores
-# line covered it. A longer window costs nothing measurable: 120 KB of
-# "who " repeats runs in 0.026 s against 0.024 s capped.
+# window spans at most three words between the pronoun and "now", so it cannot
+# run from an early clause into a later one and suppress an unrelated match:
+# "The list which holds the docs and the model name a client sends now picks
+# the route" keeps its warning. The cost is a miss when a clause joined by
+# "and" sits inside those three words ("Anyone who builds and tests now gets a
+# bonus"), which this pack accepts.
 exceptions:
-  - '(?i)\b(?:who|whoever|whom|whomever|that|which|whose)\b[a-z\s]+?\bnow\b'
+  - '(?i)\b(?:who|whoever|whom|whomever|that|which|whose)\b(?:\s+[a-z]+){1,3}\s+now\b'

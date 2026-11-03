@@ -29,12 +29,14 @@ export class Pacer {
 		private sink: SampleSink,
 		private tracker: Pick<IdleTracker, "check">,
 		private log: (message: string) => void = () => {},
+		/** False while sampling is switched off; the timer keeps running. */
+		private enabled: () => boolean = () => true,
 	) {}
 
 	/** One timer tick: sample while busy, skip the sample while idle. */
 	tick(): Promise<void> {
 		return this.enqueue(async () => {
-			if (this.stopped) return;
+			if (this.stopped || !this.enabled()) return;
 			const verdict = this.tracker.check();
 			if (verdict.idle) {
 				// The turn ended after the last sample. One more sample covers its
@@ -63,7 +65,7 @@ export class Pacer {
 	/** A turn started: sample at once, so the counters cover the idle gap. */
 	wake(): Promise<void> {
 		return this.enqueue(async () => {
-			if (this.stopped) return;
+			if (this.stopped || !this.enabled()) return;
 			const verdict: IdleVerdict = { idle: false, reason: "turn started" };
 			if (verdict.idle) return;
 			await this.sample();
@@ -94,8 +96,20 @@ export class Pacer {
 		}
 	}
 
+	/**
+	 * Run one unit of work after the last, whatever the last one did. A failure
+	 * is logged and swallowed: a throw from the idle check must not become an
+	 * unhandled rejection that ends the agent's process.
+	 */
 	private enqueue(work: () => Promise<void>): Promise<void> {
-		this.tail = this.tail.then(work, work);
+		const run = async () => {
+			try {
+				await work();
+			} catch (err) {
+				this.log(`tick failed: ${err instanceof Error ? err.message : err}`);
+			}
+		};
+		this.tail = this.tail.then(run, run);
 		return this.tail;
 	}
 }

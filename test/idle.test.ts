@@ -304,6 +304,38 @@ describe("Pacer", () => {
 		assert.equal(r.appended.length, 2);
 	});
 
+	it("skips the sample while switched off, and resumes when switched on", async () => {
+		const sampler = { calls: 0, tick: async () => { this.calls += 1; return record(); } };
+		let enabled = false;
+		const appended: SampleRecord[] = [];
+		const tracker = { check: () => ({ idle: false, reason: "turn" }) };
+		const pacer = new Pacer(sampler, (rec) => appended.push(rec), tracker, () => {}, () => enabled);
+		await pacer.tick();
+		assert.equal(appended.length, 0);
+		enabled = true;
+		await pacer.tick();
+		assert.equal(appended.length, 1);
+	});
+
+	it("logs a throwing idle check instead of rejecting", async () => {
+		const sampler = { tick: async () => record() };
+		const logged: string[] = [];
+		const tracker = {
+			check: () => {
+				throw new Error("boom");
+			},
+		};
+		const pacer = new Pacer(sampler, () => {}, tracker, (m) => logged.push(m));
+		await pacer.tick(); // must resolve, not reject
+		assert.equal(logged.length, 1);
+		assert.ok(logged[0]?.includes("boom"));
+		// A sampler that throws on a wake is logged the same way.
+		const failing = { tick: async (): Promise<SampleRecord> => Promise.reject(new Error("sampler down")) };
+		const waker = new Pacer(failing, () => {}, { check: () => ({ idle: false, reason: "turn" }) }, (m) => logged.push(m));
+		await waker.wake();
+		assert.ok(logged[1]?.includes("sampler down"));
+	});
+
 	it("reports itself stopped once stop ran", async () => {
 		const r = rig();
 		assert.equal(r.pacer.isStopped, false);

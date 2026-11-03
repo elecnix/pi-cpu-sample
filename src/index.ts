@@ -79,7 +79,15 @@ export default function (pi: ExtensionAPI) {
 		// and after agent_settled but before the next turn begins.
 		const tracker = new IdleTracker(sampler, () => turnOpen || liveCtx?.isIdle() === false);
 		const log = (message: string) => console.error(`[pi-cpu-sample] ${message}`);
-		const pacer = new Pacer(sampler, (rec) => pi.appendEntry("cpu-sample", rec), tracker, log);
+		const pacer = new Pacer(
+			sampler,
+			(rec) => pi.appendEntry("cpu-sample", rec),
+			tracker,
+			log,
+			// The kill switch takes effect at the next tick, and removing it
+			// resumes sampling, because the timer keeps running either way.
+			() => !killSwitchActive({ dir: disableDir(homedir()), env: process.env }),
+		);
 		timer = setInterval(() => void pacer.tick(), INTERVAL_MS);
 		timer.unref();
 		current = pacer;
