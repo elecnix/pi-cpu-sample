@@ -22,8 +22,9 @@ tokens:
 # better") stacks two articles with no stranded verb, and this rule runs at
 # error level, so without this exception a correct sentence blocks the edit.
 # The second article has to sit right after the comparative, which is what
-# "the bigger engine the gate uses" does not have. The cost is a miss on a
-# noun ending in -er, such as "the user the gate knows"; this pack accepts a
-# miss rather than block a correct edit.
+# "the bigger engine the gate uses" does not have. The irregular comparatives
+# more, less and worse need naming; the rest end in -er or -est. The cost is a
+# miss on a noun ending in -er, such as "the user the gate knows"; this pack
+# accepts a miss rather than block a correct edit.
 exceptions:
-  - '(?i)\bthe\s+\w+er\s+the\b'
+  - '(?i)\bthe\s+(?:\w+(?:er|est)|more|less|worse)\s+the\b'
