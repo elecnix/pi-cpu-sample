@@ -354,3 +354,71 @@ describe("read order", () => {
 		assert.deepEqual([...ordered].sort((a, b) => a - b), [100, 101, 102, 200]);
 	});
 });
+
+describe("the Docker VM total", () => {
+	const options = (table: FakeTable) => ({
+		table,
+		docker: async () => dockerEmpty,
+		agentPid: 100,
+		agent: "pi" as const,
+		session: "pi:s1",
+		cwd: "/w",
+		runId: "r1",
+		selfPid: 999,
+		selfUid: 501,
+	});
+
+	it("never goes down when a helper exits", async () => {
+		const first = new FakeTable(
+			[
+				row(100, 0, { comm: "pi" }),
+				row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 }),
+				row(105, 1, { comm: "com.docker.sailor", startSec: 1_700_000_000 }),
+			],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[104, { own: 30, reaped: 0 }],
+				[105, { own: 10, reaped: 0 }],
+			]),
+		);
+		const sampler = new Sampler(options(first));
+		assert.equal((await sampler.tick()).dockerVmCpuS, 40);
+		// The backend exits; the sailor keeps running and its own counter grew.
+		const second = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(105, 1, { comm: "com.docker.sailor", startSec: 1_700_000_000 })],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[105, { own: 12, reaped: 0 }],
+			]),
+		);
+		sampler.replaceTable(second);
+		const rec = await sampler.tick();
+		assert.equal(rec.dockerVmBoot, String(1_700_000_000), "the VM did not restart");
+		assert.equal(rec.dockerVmCpuS, 42, "the departed helper's 30 s stays in the total");
+	});
+
+	it("starts over when the VM restarts", async () => {
+		const first = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 })],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[104, { own: 30, reaped: 0 }],
+			]),
+		);
+		const sampler = new Sampler(options(first));
+		assert.equal((await sampler.tick()).dockerVmCpuS, 30);
+		// A new VM process: its counter starts from zero, and the reader books the
+		// new value rather than a negative delta.
+		const restarted = new FakeTable(
+			[row(100, 0, { comm: "pi" }), row(106, 1, { comm: "com.docker.backend", startSec: 1_700_000_500 })],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[106, { own: 5, reaped: 0 }],
+			]),
+		);
+		sampler.replaceTable(restarted);
+		const rec = await sampler.tick();
+		assert.equal(rec.dockerVmBoot, String(1_700_000_500));
+		assert.equal(rec.dockerVmCpuS, 5);
+	});
+});

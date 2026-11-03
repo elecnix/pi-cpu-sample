@@ -37,6 +37,10 @@ export class Sampler implements IdleProbe {
 	private dockerLedger = new DockerLedger();
 	/** Session members outside the tree as of the last full sample. */
 	private outsideTree = new Set<string>();
+	/** The last CPU total per Docker host process, so a departing helper keeps its time. */
+	private vmSeen = new Map<string, number>();
+	/** The VM generation these totals belong to. */
+	private lastVmBoot = "";
 
 	constructor(private opts: SamplerOptions) {
 		this.sessionLedger = new SessionLedger(opts.agentPid, this.everInTree);
@@ -127,18 +131,28 @@ export class Sampler implements IdleProbe {
 		const buckets = this.sessionLedger.consume(rows, taggedKeys, usage);
 		this.outsideTree = outsideTreeKeys(rows, this.opts.agentPid, taggedKeys, this.everInTree);
 
-		// Docker host processes: cumulative CPU of the VM and its helpers.
-		let vmCpuS = 0;
+		// Docker host processes: cumulative CPU of the VM and its helpers. A
+		// helper that exits keeps its last total, so this number only grows until
+		// the VM restarts; `dockerVmBoot` is what tells a reader to start over.
 		let vmBoot = 0;
+		for (const key of dockerHostKeys) {
+			const row = m.rows.get(key);
+			if (row && row.startSec > vmBoot) vmBoot = row.startSec;
+		}
+		const bootKey = String(vmBoot);
+		if (bootKey !== this.lastVmBoot) {
+			// A restart replaces every host counter with a fresh one.
+			this.vmSeen.clear();
+			this.lastVmBoot = bootKey;
+		}
 		for (const key of dockerHostKeys) {
 			const row = m.rows.get(key);
 			if (!row) continue;
 			const ru = table.rusage(row.pid);
-			if (ru) {
-				vmCpuS += ru.own + ru.reaped;
-				if (row.startSec > vmBoot) vmBoot = row.startSec;
-			}
+			if (ru) this.vmSeen.set(key, ru.own + ru.reaped);
 		}
+		let vmCpuS = 0;
+		for (const total of this.vmSeen.values()) vmCpuS += total;
 
 		let docker: DockerSample;
 		try {

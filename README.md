@@ -23,7 +23,7 @@ Every number is cumulative CPU seconds, so a missed tick loses nothing. The read
 | `tagged_orphan_cpu_s` | Processes tagged `CPU_SAMPLE_SESSION` that left the tree, such as a dev server started by a shell that has since exited. |
 | `procs` | Live session processes, largest first, capped at 64. |
 | `docker.stacks[]` | Per compose stack: the working directory and project name, plus the cumulative container CPU per container id. |
-| `docker_vm_cpu_s` | Cumulative CPU of every Docker Desktop host process (the Linux VM included, plus its backend and helper processes). Container work produces the `docker.stacks[]` numbers separately. |
+| `docker_vm_cpu_s` | Cumulative CPU of every Docker Desktop host process (the Linux VM included, plus its backend and helper processes). A helper that exits keeps its last total, so the number only grows until the VM restarts, which `docker_vm_boot` marks. Container work produces the `docker.stacks[]` numbers separately. |
 
 ## Sampling while the session is idle
 
