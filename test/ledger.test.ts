@@ -273,6 +273,23 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.descendantCpuS, 4);
 	});
 
+	it("adds a departed member's total as the live members grow", () => {
+		// A floor alone loses this: once the live sum passes the held value the
+		// departed member's time would be replaced, not added.
+		const ledger = new SessionLedger(100, new Set());
+		ledger.consume([row(100, 0), row(300, 1)], new Set(["300:1700000300:0"]), new Map([
+			[100, cpu(10, 0)],
+			[300, cpu(5, 0)],
+		]));
+		// The sampler keeps its tag cache across ticks, so the departed key is
+		// still in the tagged set.
+		const after = ledger.consume([row(100, 0), row(400, 1)], new Set(["300:1700000300:0", "400:1700000400:0"]), new Map([
+			[100, cpu(10, 0)],
+			[400, cpu(10, 0)],
+		]));
+		assert.equal(after.taggedOrphanCpuS, 15);
+	});
+
 	it("holds a reparented member's last total after it exits", () => {
 		const ledger = new SessionLedger(100, new Set());
 		const child = row(101, 100);

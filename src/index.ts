@@ -28,6 +28,7 @@ export default function (pi: ExtensionAPI) {
 	/** The pacer of the running session, or null between sessions. */
 	let current: Pacer | null = null;
 	let liveCtx: ExtensionContext | null = null;
+	let liveSessionId: string | null = null;
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let turnOpen = false;
 	let wakeScheduled = false;
@@ -72,6 +73,7 @@ export default function (pi: ExtensionAPI) {
 			selfPid: -1, // sampling is in-process: the agent's own CPU is counted
 		});
 		liveCtx = ctx;
+		liveSessionId = sessionId;
 		// pi answers for itself whether a run or a compaction is active. The
 		// event flag covers the gaps: before the first agent_start of a reload,
 		// and after agent_settled but before the next turn begins.
@@ -87,20 +89,26 @@ export default function (pi: ExtensionAPI) {
 
 	// Registered once, so a second session in the same process cannot stack
 	// another copy of it beside the first.
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (_event, ctx) => {
+		// A shutdown for another session must leave the running one alone.
+		const shuttingId = ctx?.sessionManager?.getSessionId?.() ?? null;
+		if (shuttingId !== null && liveSessionId !== null && shuttingId !== liveSessionId) return;
 		if (timer) clearInterval(timer);
 		timer = null;
 		delete process.env.CPU_SAMPLE_SESSION;
 		const pacer = current;
-		const ctx = liveCtx;
+		const liveSessionCtx = liveCtx;
 		try {
 			if (pacer && !killSwitchActive({ dir: disableDir(homedir()), env: process.env })) await pacer.stop();
 		} finally {
 			// stop() awaits an in-flight tick, which can include a Docker read. A
 			// session started during that await owns a new pacer, and this
 			// handler must not clear it.
-			if (current === pacer) current = null;
-			if (liveCtx === ctx) liveCtx = null;
+			if (current === pacer) {
+				current = null;
+				liveCtx = null;
+				liveSessionId = null;
+			}
 		}
 	});
 }

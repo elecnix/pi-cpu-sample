@@ -29,7 +29,7 @@ Every number is cumulative CPU seconds, so a missed tick loses nothing. The read
 
 A session is idle when all of these hold:
 
-- no turn is in progress, meaning `agent_start` fired and `agent_settled` has not;
+- no turn is in progress: pi reports the session idle through `ctx.isIdle()`, and no `agent_start` waits for its `agent_settled`;
 - the agent's descendants are the same processes as at the last check, and they used less than 1% of one core between the two checks;
 - every session member outside the agent's tree, tagged or reparented, has exited. The check reads the pid as alive or gone. macOS 27 doesn't report a process start time, so a pid that changed hands since the last sample also reads as alive. The session then samples once more.
 

@@ -6,8 +6,14 @@
  * contributes the CPU of the descendants it has reaped. Within one snapshot
  * each process's time is counted exactly once, because reaped time only
  * covers processes that have already left the table. The reader subtracts
- * consecutive samples, so the ledger only has to keep the sum from dipping:
- * each bucket never reports less than it did on the previous tick.
+ * consecutive samples, so the ledger only has to keep the sum from dipping.
+ *
+ * A member that exits is handled by who owned its exit. If its session parent
+ * is alive, or was a session member when the sampler last saw the member, that
+ * parent's reaped total carries the time and the member adds nothing. If
+ * launchd owned it, nothing else records its time, so its last total is added
+ * for the rest of the run. A floor on each bucket guards the totals in any
+ * case the sampler cannot see.
  *
  * That floor is what holds a departed member's time. A process reaped by its
  * session parent leaves through the parent's reaped total, so the sum does not
@@ -101,6 +107,9 @@ export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: S
 export class SessionLedger {
 	/** The last reported bucket totals; each bucket only ever grows. */
 	private lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0 };
+	/** The last known total per key, and the key of its parent, for exits. */
+	private lastTotal = new Map<string, number>();
+	private lastParent = new Map<string, string | null>();
 
 	/**
 	 * @param everInTree keys that were ever tree members; the caller keeps this
@@ -113,6 +122,8 @@ export class SessionLedger {
 
 	consume(rows: ProcRow[], taggedKeys: Set<string>, usage: Map<number, ProcCpu>): Buckets {
 		const m = classify(rows, this.agentPid, taggedKeys);
+		const keyByPid = new Map<number, string>();
+		for (const row of rows) keyByPid.set(row.pid, keyOf(row));
 		for (const key of m.tree) this.everInTree.add(key);
 		const sessionKeys = new Set<string>([...m.tree, ...this.everInTree, ...m.tagged]);
 		for (const key of m.dockerHost) sessionKeys.delete(key);
@@ -121,15 +132,32 @@ export class SessionLedger {
 		let descendantCpuS = 0;
 		let taggedOrphanCpuS = 0;
 		const procs: { name: string; pid: number; cpuS: number }[] = [];
-		for (const key of sessionKeys) {
+		// Departed members are visited too: their keys live on in lastTotal even
+		// after the table and the tag set stop mentioning them.
+		const visited = new Set<string>([...sessionKeys, ...this.lastTotal.keys()]);
+		for (const key of visited) {
 			const row = m.rows.get(key);
-			if (!row) continue; // gone; the bucket floor below holds its time
+			if (!row) {
+				// The member left the table. Add its last total only when no
+				// session member owned the exit, because a session parent's
+				// reaped total already holds that time.
+				const departed = this.lastTotal.get(key);
+				const parent = this.lastParent.get(key) ?? null;
+				const ownedBySession = parent !== null && (this.everInTree.has(parent) || taggedKeys.has(parent));
+				if (departed !== undefined && !ownedBySession) {
+					if (taggedKeys.has(key) && !this.everInTree.has(key)) taggedOrphanCpuS += departed;
+					else descendantCpuS += departed;
+				}
+				continue;
+			}
 			// A failed read adds nothing. The process either comes back on the next
 			// tick, or another member's reaped total picked up its time, or the
 			// bucket floor below holds the total.
 			const ru = usage.get(row.pid) ?? null;
 			const total = ru ? ru.own + ru.reaped : 0;
 			const own = ru ? ru.own : 0;
+			if (ru) this.lastTotal.set(key, total);
+			this.lastParent.set(key, keyByPid.get(row.ppid) ?? null);
 			procs.push({ name: row.comm, pid: row.pid, cpuS: total });
 			if (row.pid === this.agentPid) {
 				agentCpuS += own;
@@ -143,8 +171,8 @@ export class SessionLedger {
 				descendantCpuS += total;
 			}
 		}
-		// Each bucket only grows: a member that left without a session parent
-		// to record its exit keeps its time this way.
+		// Each bucket only grows, which guards the cases the carry cannot see,
+		// such as a read that fails while a live member's total is lower.
 		agentCpuS = Math.max(agentCpuS, this.lastBuckets.agent);
 		descendantCpuS = Math.max(descendantCpuS, this.lastBuckets.descendant);
 		taggedOrphanCpuS = Math.max(taggedOrphanCpuS, this.lastBuckets.taggedOrphan);

@@ -54,4 +54,4 @@ tokens:
 # line covered it. A longer window costs nothing measurable: 120 KB of
 # "who " repeats runs in 0.026 s against 0.024 s capped.
 exceptions:
-  - '(?i)\b(?:who|that|which|whose)\b[a-z\s]+?\bnow\b'
+  - '(?i)\b(?:who|whoever|whom|whomever|that|which|whose)\b[a-z\s]+?\bnow\b'
