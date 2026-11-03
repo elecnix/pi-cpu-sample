@@ -39,8 +39,8 @@ export class Sampler implements IdleProbe {
 	private outsideTree = new Set<string>();
 	/** The last CPU total per Docker host process, so a departing helper keeps its time. */
 	private vmSeen = new Map<string, number>();
-	/** The VM generation these totals belong to. */
-	private lastVmBoot = "";
+	/** The VM generation these totals belong to, reported as `dockerVmBoot`. */
+	private vmBoot = 0;
 
 	constructor(private opts: SamplerOptions) {
 		this.sessionLedger = new SessionLedger(opts.agentPid, this.everInTree);
@@ -133,24 +133,26 @@ export class Sampler implements IdleProbe {
 
 		// Docker host processes: cumulative CPU of the VM and its helpers. A
 		// helper that exits keeps its last total, so this number only grows until
-		// the VM restarts; `dockerVmBoot` is what tells a reader to start over.
-		let vmBoot = 0;
-		for (const key of dockerHostKeys) {
-			const row = m.rows.get(key);
-			if (row && row.startSec > vmBoot) vmBoot = row.startSec;
-		}
-		const bootKey = String(vmBoot);
-		if (bootKey !== this.lastVmBoot) {
-			// A restart replaces every host counter with a fresh one.
-			this.vmSeen.clear();
-			this.lastVmBoot = bootKey;
-		}
+		// the VM restarts. A restart shows as a live process whose counter went
+		// backwards, or as a set of host processes sharing no key with the last
+		// tick; helper churn alone does neither, so `dockerVmBoot` stays put.
+		let vmRawBoot = 0;
+		const current = new Map<string, number>();
 		for (const key of dockerHostKeys) {
 			const row = m.rows.get(key);
 			if (!row) continue;
+			if (row.startSec > vmRawBoot) vmRawBoot = row.startSec;
 			const ru = table.rusage(row.pid);
-			if (ru) this.vmSeen.set(key, ru.own + ru.reaped);
+			if (ru) current.set(key, ru.own + ru.reaped);
 		}
+		const shared = [...current.keys()].filter((key) => this.vmSeen.has(key));
+		const regressed = shared.some((key) => (current.get(key) ?? 0) < (this.vmSeen.get(key) ?? 0) - 1e-9);
+		const replaced = this.vmSeen.size > 0 && current.size > 0 && shared.length === 0;
+		if (this.vmSeen.size === 0 || regressed || replaced) {
+			this.vmSeen.clear();
+			this.vmBoot = vmRawBoot;
+		}
+		for (const [key, total] of current) this.vmSeen.set(key, total);
 		let vmCpuS = 0;
 		for (const total of this.vmSeen.values()) vmCpuS += total;
 
@@ -184,7 +186,7 @@ export class Sampler implements IdleProbe {
 			procsTruncated: buckets.procsTruncated,
 			docker,
 			dockerVmCpuS: vmCpuS,
-			dockerVmBoot: vmBoot > 0 ? String(vmBoot) : null,
+			dockerVmBoot: this.vmBoot > 0 ? String(this.vmBoot) : null,
 			sampleCpuS,
 			sampleWallS: (performance.now() - startedWall) / 1000,
 		};

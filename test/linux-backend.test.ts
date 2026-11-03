@@ -21,6 +21,26 @@ describe("LinuxTable (real OS)", () => {
 		assert.ok(rows!.some((r) => r.startUsec !== 0), "some start times carry a sub-second part");
 	});
 
+	itLinux("lists a child forked by a worker thread", async () => {
+		// The task-level children file only covers one thread, so the union is
+		// what makes this child visible.
+		const { Worker } = await import("node:worker_threads");
+		const worker = new Worker(
+			`const { parentPort } = require("node:worker_threads");
+			 const { spawn } = require("node:child_process");
+			 parentPort.postMessage(spawn("/bin/sleep", ["5"], { stdio: "ignore" }).pid);`,
+			{ eval: true },
+		);
+		const pid = await new Promise<number>((resolve) => worker.once("message", resolve));
+		try {
+			await new Promise((r) => setTimeout(r, 200));
+			assert.ok(new LinuxTable().childPids(process.pid)?.includes(pid), "the worker's child should be listed");
+		} finally {
+			process.kill(pid, "SIGKILL");
+			void worker.terminate();
+		}
+	});
+
 	itLinux("keeps a process apart from a same-second namesake", () => {
 		// A pid reused inside the same second must not share a key with its
 		// previous holder, so the sub-second part has to reach the key.

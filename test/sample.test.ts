@@ -427,6 +427,42 @@ describe("the Docker VM total", () => {
 		assert.equal(rec.dockerVmCpuS, 42, "the departed helper's 30 s stays in the total");
 	});
 
+	it("keeps its boot and its totals when a newer helper comes and goes", async () => {
+		const first = new FakeTable(
+			[
+				row(100, 0, { comm: "pi" }),
+				row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 }),
+				row(105, 1, { comm: "com.docker.sailor", startSec: 1_700_000_100 }),
+			],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[104, { own: 30, reaped: 0 }],
+				[105, { own: 10, reaped: 0 }],
+			]),
+		);
+		const sampler = new Sampler(options(first));
+		const booted = await sampler.tick();
+		assert.equal(booted.dockerVmBoot, String(1_700_000_100));
+
+		// The newest helper is replaced by an even newer one while the VM runs on.
+		const second = new FakeTable(
+			[
+				row(100, 0, { comm: "pi" }),
+				row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 }),
+				row(106, 1, { comm: "com.docker.sailor", startSec: 1_700_000_900 }),
+			],
+			new Map([
+				[100, { own: 0, reaped: 0 }],
+				[104, { own: 30, reaped: 0 }],
+				[106, { own: 5, reaped: 0 }],
+			]),
+		);
+		sampler.replaceTable(second);
+		const rec = await sampler.tick();
+		assert.equal(rec.dockerVmBoot, String(1_700_000_100), "helper churn is not a VM restart");
+		assert.equal(rec.dockerVmCpuS, 45, "the departed helper's 10 s stays");
+	});
+
 	it("starts over when the VM restarts", async () => {
 		const first = new FakeTable(
 			[row(100, 0, { comm: "pi" }), row(104, 1, { comm: "com.docker.backend", startSec: 1_700_000_000 })],
