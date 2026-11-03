@@ -74,6 +74,7 @@ export default function (pi: ExtensionAPI) {
 		});
 		liveCtx = ctx;
 		liveSessionId = sessionId;
+		turnOpen = false; // a new session begins with no open turn
 		// pi answers for itself whether a run or a compaction is active. The
 		// event flag covers the gaps: before the first agent_start of a reload,
 		// and after agent_settled but before the next turn begins.
@@ -112,13 +113,14 @@ export default function (pi: ExtensionAPI) {
 			// stop() awaits an in-flight tick, which can include a Docker read. A
 			// session started during that await owns a new pacer, and this
 			// handler must not clear it.
+			// A session that ends mid-turn must not leave the next one looking
+			// busy. This runs whatever owns the slot by now, because the next
+			// session's pacer may already have been installed during the await.
+			turnOpen = false;
 			if (current === pacer) {
 				current = null;
 				liveCtx = null;
 				liveSessionId = null;
-				// A session that ends mid-turn must not leave the next one
-				// looking busy.
-				turnOpen = false;
 			}
 		}
 	});

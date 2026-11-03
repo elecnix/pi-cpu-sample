@@ -107,8 +107,9 @@ export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: S
 export class SessionLedger {
 	/** The last reported bucket totals; each bucket only ever grows. */
 	private lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0 };
-	/** The last known total per key, and the key of its parent, for exits. */
+	/** The last known total, reaped total and parent per key, for exits. */
 	private lastTotal = new Map<string, number>();
+	private lastReaped = new Map<string, number>();
 	private lastParent = new Map<string, string | null>();
 
 	/**
@@ -143,7 +144,14 @@ export class SessionLedger {
 				// reaped total already holds that time.
 				const departed = this.lastTotal.get(key);
 				const parent = this.lastParent.get(key) ?? null;
-				const ownedBySession = parent !== null && (this.everInTree.has(parent) || taggedKeys.has(parent));
+				const parentIsMember = parent !== null && (this.everInTree.has(parent) || taggedKeys.has(parent));
+				// A parent that is still alive will fold the exit into its reaped
+				// total. A parent that left the table only holds the time if it had
+				// already reaped it, which its last reaped total shows.
+				const parentHasIt =
+					parent !== null &&
+					(m.rows.has(parent) || (this.lastReaped.get(parent) ?? 0) >= (departed ?? 0) - 1e-9);
+				const ownedBySession = parentIsMember && parentHasIt;
 				if (departed !== undefined && !ownedBySession) {
 					if (taggedKeys.has(key) && !this.everInTree.has(key)) taggedOrphanCpuS += departed;
 					else descendantCpuS += departed;
@@ -156,7 +164,10 @@ export class SessionLedger {
 			const ru = usage.get(row.pid) ?? null;
 			const total = ru ? ru.own + ru.reaped : 0;
 			const own = ru ? ru.own : 0;
-			if (ru) this.lastTotal.set(key, total);
+			if (ru) {
+				this.lastTotal.set(key, total);
+				this.lastReaped.set(key, ru.reaped);
+			}
 			this.lastParent.set(key, keyByPid.get(row.ppid) ?? null);
 			procs.push({ name: row.comm, pid: row.pid, cpuS: total });
 			if (row.pid === this.agentPid) {

@@ -273,6 +273,44 @@ describe("SessionLedger with members outside the tree", () => {
 		assert.equal(after.descendantCpuS, 4);
 	});
 
+	it("adds a child when its session parent died before reaping it", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const b = row(101, 100);
+		const c = row(102, 101);
+		ledger.consume([row(100, 0), b, c], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 0)],
+			[102, cpu(3, 0)],
+		]));
+		// Both gone next tick. The agent reaped B, so B's 2 s sits in the agent's
+		// reaped total, but nothing reaped C: its parent died first, so it went to
+		// launchd. C's 3 s has to be carried.
+		const after = ledger.consume([row(100, 0), row(103, 100)], new Set(), new Map([
+			[100, cpu(10, 2)],
+			[103, cpu(10, 0)],
+		]));
+		assert.equal(after.descendantCpuS, 15);
+	});
+
+	it("does not carry a child its dead parent had already reaped", () => {
+		const ledger = new SessionLedger(100, new Set());
+		const b = row(101, 100);
+		const c = row(102, 101);
+		ledger.consume([row(100, 0), b, c], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 0)],
+			[102, cpu(3, 0)],
+		]));
+		// The parent reaped the child (its reaped total holds the 3 s), then both
+		// left the table.
+		ledger.consume([row(100, 0), row(101, 100)], new Set(), new Map([
+			[100, cpu(10, 0)],
+			[101, cpu(2, 3)],
+		]));
+		const after = ledger.consume([row(100, 0)], new Set(), new Map([[100, cpu(10, 0)]]));
+		assert.equal(after.descendantCpuS, 5);
+	});
+
 	it("adds a departed member's total as the live members grow", () => {
 		// A floor alone loses this: once the live sum passes the held value the
 		// departed member's time would be replaced, not added.
