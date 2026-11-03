@@ -12,7 +12,14 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      # A pull request from a fork runs with no repository secrets, so the Cite
+      # step cannot authenticate. Report the reason instead of failing on every
+      # outside contribution.
+      - name: Report a fork pull request
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: "echo '::notice::Cite is skipped: a fork pull request receives no repository secrets.'"
       - name: Review this pull request with Cite
+        if: github.event.pull_request.head.repo.full_name == github.repository
         # Pinned to a full commit SHA, like everything else a repository
         # ruleset checks -- including the actions a composite action calls.
         uses: elecnix/cite@f5707676437aacf2d3566d0e831c5c558717f994 # v0.15.0

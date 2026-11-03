@@ -53,7 +53,9 @@ describe("MacOSTable (real OS)", () => {
 		});
 		const after = table.rusage(process.pid);
 		assert.ok(after);
-		assert.ok(after!.reaped >= before!.reaped);
+		// A child that burned CPU for 120 ms must add to the parent's reaped
+		// time. `>=` would also pass when the reaped accounting is broken.
+		assert.ok(after!.reaped - before!.reaped > 0.01, `reaped grew by ${after!.reaped - before!.reaped}s`);
 	});
 
 	itMac("reads a tag it planted in a child's environment", async () => {
@@ -63,9 +65,37 @@ describe("MacOSTable (real OS)", () => {
 			env: { ...process.env, CPU_SAMPLE_SESSION: "test:planted-tag" },
 			stdio: "ignore",
 		});
-		await new Promise((r) => setTimeout(r, 300));
-		const tags = table.readEnvTags([child.pid!]);
-		assert.equal(tags.get(child.pid!), "test:planted-tag");
-		child.kill("SIGKILL");
+		try {
+			await new Promise((r) => setTimeout(r, 300));
+			const tags = table.readEnvTags([child.pid!]);
+			assert.equal(tags.get(child.pid!), "test:planted-tag");
+		} finally {
+			// Whatever the assertion decided, the child must not outlive the test.
+			child.kill("SIGKILL");
+		}
+	});
+
+	itMac("reads a tag whose value contains a newline followed by digits", async () => {
+		const table = new MacOSTable();
+		// ps escapes a newline in an env value as \012, and a value that starts
+		// a line with digits could read as a pid record if the parser trusted
+		// any leading digits. A second child carries a different tag, so a mix-up
+		// shows as the wrong value rather than as a missing one.
+		const mk = (tag: string) =>
+			spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+				env: { ...process.env, NOTE: "line one\n12345 looks like a pid\nline three", CPU_SAMPLE_SESSION: tag },
+				stdio: "ignore",
+			});
+		const first = mk("test:first");
+		const second = mk("test:second");
+		try {
+			await new Promise((r) => setTimeout(r, 300));
+			const tags = table.readEnvTags([first.pid!, second.pid!]);
+			assert.equal(tags.get(first.pid!), "test:first");
+			assert.equal(tags.get(second.pid!), "test:second");
+		} finally {
+			first.kill("SIGKILL");
+			second.kill("SIGKILL");
+		}
 	});
 });

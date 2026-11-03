@@ -272,3 +272,50 @@ describe("Sampler.tick", () => {
 		assert.equal(rec.agentCpuS + rec.descendantCpuS + rec.taggedOrphanCpuS, 0);
 	});
 });
+
+describe("Sampler.tick with an in-process sampler", () => {
+	it("still credits the agent's own CPU when selfPid is the agent pid", async () => {
+		// A single-process sampler passes its own pid as selfPid, which is also
+		// the agent pid. The agent is the session's main number, so it must
+		// stay in the ledger.
+		const table = new FakeTable([row(100, 0, { comm: "pi" }), row(101, 100)], new Map([
+			[100, { own: 5, reaped: 1 }],
+			[101, { own: 2, reaped: 0 }],
+		]));
+		const sampler = new Sampler({
+			table,
+			docker: async () => dockerEmpty,
+			agentPid: 100,
+			agent: "pi",
+			session: "pi:s1",
+			cwd: "/w",
+			runId: "r1",
+			selfPid: 100,
+			selfUid: 501,
+		});
+		const rec = await sampler.tick();
+		assert.equal(rec.agentCpuS, 5);
+		assert.equal(rec.descendantCpuS, 3);
+	});
+
+	it("still excludes a separate sampler process from the session", async () => {
+		const table = new FakeTable([row(100, 0, { comm: "pi" }), row(200, 1, { comm: "sampler" })], new Map([
+			[100, { own: 4, reaped: 0 }],
+			[200, { own: 9, reaped: 0 }],
+		]));
+		const sampler = new Sampler({
+			table,
+			docker: async () => dockerEmpty,
+			agentPid: 100,
+			agent: "claude",
+			session: "claude:s1",
+			cwd: "/w",
+			runId: "r1",
+			selfPid: 200,
+			selfUid: 501,
+		});
+		const rec = await sampler.tick();
+		assert.equal(rec.agentCpuS, 4);
+		assert.equal(rec.descendantCpuS, 0);
+	});
+});

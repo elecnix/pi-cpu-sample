@@ -2,8 +2,10 @@
  * One sampler tick: classify the process table, read rusage, read Docker, and
  * assemble the cumulative sample record.
  *
- * The sampler's own process (selfPid) is never a session member: it is
- * instrumentation, not session work.
+ * A sampler that runs in its own process (selfPid) is instrumentation, not
+ * session work, so the session never counts it. An in-process sampler passes
+ * the agent pid as selfPid; the agent is the session's main number, so that
+ * case keeps the agent in the ledger.
  */
 
 import { DockerLedger, SessionLedger, classify, type ContainerObs } from "./ledger.js";
@@ -37,6 +39,15 @@ export class Sampler {
 		this.sessionLedger = new SessionLedger(opts.agentPid, this.everInTree);
 	}
 
+	/**
+	 * The pid the session must not count: the sampler's own process. An
+	 * in-process sampler shares the agent's pid, and the agent always counts,
+	 * so that case excludes nothing.
+	 */
+	private exclusionPid(): number {
+		return this.opts.selfPid === this.opts.agentPid ? -1 : this.opts.selfPid;
+	}
+
 	/** Swap the process table, for tests that move a process between ticks. */
 	replaceTable(table: ProcTable): void {
 		this.opts.table = table;
@@ -49,6 +60,7 @@ export class Sampler {
 		const rows = table.rows() ?? [];
 		const myUid = this.opts.selfUid ?? process.getuid?.() ?? -1;
 
+		const excludePid = this.exclusionPid();
 		const m = classify(rows, this.opts.agentPid, new Set());
 		const dockerHostKeys = m.dockerHost;
 
@@ -60,7 +72,7 @@ export class Sampler {
 			const key = keyOf(row);
 			if (m.tree.has(key) || dockerHostKeys.has(key) || row.uid !== myUid) continue;
 			if (this.everInTree.has(key)) continue; // membership carried from the tree
-			if (row.pid === this.opts.selfPid) continue;
+			if (row.pid === excludePid) continue;
 			if (!this.tagCache.has(key)) {
 				candidates.push(row.pid);
 				candidateKeys.set(row.pid, key);
@@ -81,7 +93,7 @@ export class Sampler {
 
 		const usage = new Map<number, ProcCpu>();
 		for (const row of rows) {
-			if (row.pid === this.opts.selfPid) continue;
+			if (row.pid === excludePid) continue;
 			const ru = table.rusage(row.pid);
 			if (ru) usage.set(row.pid, ru);
 		}

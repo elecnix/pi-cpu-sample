@@ -124,27 +124,37 @@ export class MacOSTable implements ProcTable {
 			for (const pid of pids) out.set(pid, null);
 			return out;
 		}
-		const wanted = new Set(pids);
-		// Records: a line whose first token is a pid starts one; env values
-		// that contain newlines arrive as continuation lines.
-		const records = new Map<number, string>();
-		let current = -1;
-		for (const line of text.split("\n")) {
-			const m = /^\s*(\d+)\s?(.*)$/.exec(line);
-			if (m) {
-				current = Number(m[1]);
-				if (wanted.has(current)) records.set(current, m[2] ?? "");
-			} else if (current !== -1 && wanted.has(current)) {
-				records.set(current, (records.get(current) ?? "") + " " + line);
-			}
-		}
-		for (const pid of pids) {
-			const rec = records.get(pid);
-			const m = rec ? /(?:^|\s)CPU_SAMPLE_SESSION=([^\s]*)/.exec(rec) : null;
-			out.set(pid, m ? (m[1] ?? null) : null);
-		}
-		return out;
+		return parseEnvRecords(text, pids);
 	}
+}
+
+/**
+ * Extract each pid's CPU_SAMPLE_SESSION value from `ps -axEww -o pid=,command=`
+ * output.
+ *
+ * Every process is exactly one line: the pid column is five characters wide
+ * followed by one space, and ps escapes a newline inside an env value as the
+ * four characters `\012`, so nothing a process holds can start a line that
+ * looks like a record. A line that does not carry the pid column is skipped
+ * rather than joined to the record above it, because joining is what would let
+ * a stray line be read as another pid's record.
+ */
+export function parseEnvRecords(text: string, pids: number[]): Map<number, string | null> {
+	const out = new Map<number, string | null>();
+	const wanted = new Set(pids);
+	const records = new Map<number, string>();
+	for (const line of text.split("\n")) {
+		const m = /^ *(\d+) (.+)$/.exec(line);
+		if (!m) continue;
+		const pid = Number(m[1]);
+		if (wanted.has(pid)) records.set(pid, m[2] ?? "");
+	}
+	for (const pid of pids) {
+		const rec = records.get(pid);
+		const m = rec ? /(?:^| )CPU_SAMPLE_SESSION=(\S*)/.exec(rec) : null;
+		out.set(pid, m ? (m[1] ?? null) : null);
+	}
+	return out;
 }
 
 export function macosTable(): ProcTable {

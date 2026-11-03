@@ -6,12 +6,38 @@
  * an error for the sampler: the snapshot comes back marked not ok.
  */
 
+import { existsSync } from "node:fs";
 import { request, type IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { isUnder } from "./paths.js";
 import type { ContainerObs } from "./ledger.js";
 
-export const DEFAULT_SOCKET = `${homedir()}/.docker/run/docker.sock`;
+/** Docker Desktop's socket, then the classic Engine socket. */
+export function defaultSockets(home: string = homedir()): string[] {
+	return [`${home}/.docker/run/docker.sock`, "/var/run/docker.sock"];
+}
+
+/**
+ * The socket to connect to: `DOCKER_HOST` when it names a unix socket, else the
+ * first default location that exists, else the first default location, so a
+ * missing socket reads as Docker being down. A tcp endpoint is not supported
+ * and resolves to null.
+ */
+export function resolveSocket(opts: {
+	DOCKER_HOST?: string | undefined;
+	exists?: (path: string) => boolean;
+	home?: string;
+}): string | null {
+	const exists = opts.exists ?? existsSync;
+	const defaults = defaultSockets(opts.home);
+	const host = opts.DOCKER_HOST?.trim();
+	if (host) {
+		if (!host.startsWith("unix://")) return null;
+		const path = host.slice("unix://".length);
+		return exists(path) ? path : null;
+	}
+	return defaults.find((p) => exists(p)) ?? null;
+}
 
 interface ContainerListEntry {
 	Id?: string;
@@ -22,13 +48,16 @@ export const LABEL_DIR = "com.docker.compose.project.working_dir";
 export const LABEL_PROJECT = "com.docker.compose.project";
 
 export class DockerClient {
-	constructor(
-		private socketPath: string = DEFAULT_SOCKET,
-		private timeoutMs = 4000,
-	) {}
+	private readonly socketPath: string | null;
+
+	/** Pass a socket path to override the resolution, or none to read the environment. */
+	constructor(socketPath?: string, private timeoutMs = 4000) {
+		this.socketPath = socketPath ?? resolveSocket({ DOCKER_HOST: process.env.DOCKER_HOST });
+	}
 
 	/** Cumulative container CPU seconds for every stack under `cwd`. */
 	async listUnder(cwd: string): Promise<{ ok: boolean; containers: ContainerObs[] }> {
+		if (this.socketPath === null) return { ok: false, containers: [] };
 		let list: ContainerListEntry[];
 		try {
 			list = JSON.parse(await this.get("/containers/json?all=false")) as ContainerListEntry[];
@@ -61,10 +90,12 @@ export class DockerClient {
 	}
 
 	private get(path: string): Promise<string> {
+		const socketPath = this.socketPath;
+		if (socketPath === null) return Promise.reject(new Error("no docker socket"));
 		return new Promise((resolve, reject) => {
 			const req = request(
 				{
-					socketPath: this.socketPath,
+					socketPath,
 					path,
 					method: "GET",
 					timeout: this.timeoutMs,
@@ -82,6 +113,9 @@ export class DockerClient {
 						body += chunk;
 					});
 					res.on("end", () => resolve(body));
+					// A reset in the middle of a body otherwise surfaces as an
+					// uncaught exception; it belongs to the caller's skip path.
+					res.on("error", reject);
 				},
 			);
 			req.on("timeout", () => {
