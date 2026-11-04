@@ -10,8 +10,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts"
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "bench:idle": "node --import tsx bench/idle-cost.ts"
   },
   "keywords": [
     "pi-package",

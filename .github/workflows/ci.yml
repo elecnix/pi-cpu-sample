@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One CI run per pull request. Pushing again supersedes the previous run
+# instead of queueing beside it: the self-hosted pool is a fixed number of
+# runner slots, and a superseded run holds one for as long as a live one does.
+# Pushes to main are never cancelled -- main's history has to stay verified.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install --legacy-peer-deps
+      # The macOS-only backend tests skip themselves on Linux; the Linux /proc
+      # backend runs here for real, so the accounting logic is exercised
+      # against a live process table on every run.
+      - run: npm test
+
+  check:
+    # `tsc --noEmit` against the minimum supported Node's types.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm install --legacy-peer-deps
+      - run: npm run check
+
+  dupdelta:
+    # Reports only the duplication this pull request introduces, as inline
+    # warnings on the diff. Never fails the build.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the merge-base has to be reachable
+      - uses: elecnix/dupdelta@c95b985a8e9ba75c1473f2fe3695d8478f869d53 # v0.3.0
+
+  pr-body-format:
+    # Flags a PR description that renders badly on GitHub: hard-wrapped
+    # paragraphs, broken list items, collapsed tables, unparsable mermaid.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # actions/checkout needs it; a scoped block sets the rest to none
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install GitHub CLI (the action's checkers shell out to gh)
+        run: |
+          GH_VERSION=2.98.0
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp
+          sudo mv "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+      - uses: elecnix/gh-pr-body-action@08c74dc0736abe295e90d6363abd55cf7ea63ef3  # v1.2.1

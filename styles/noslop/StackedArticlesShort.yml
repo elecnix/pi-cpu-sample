@@ -1,0 +1,36 @@
+---
+# The one-premodifier form of StackedArticles: "the engine the gate uses".
+#
+# The rule needs a verb after the second phrase, which is what separates a
+# stranded verb from a plain noun between two articles: "I gave the man the
+# book" is correct English and must not match. Every middle token is enumerated
+# and none may be a finite verb, so ordinary subject-verb-object prose can
+# never match either.
+#
+# Two known misses. The tagger reads a plural noun like "oracles" as VBZ, so
+# "the oracles the gate validates against" slips through; adding VBZ to the
+# middle catches it, doubles the hit rate, and fires on correct English. And
+# the tagger reads some verbs as plural nouns, so "the file the gate rejects"
+# slips through too. This pack gates a hook that blocks an edit before it
+# reaches disk, so a false positive costs more than a miss.
+#
+# Because of those misses the rule warns instead of blocking: a tag sequence
+# cannot tell "the engine the gate uses" from "I told the man the story was
+# long", where a clause follows the second article. A warning reports the
+# pattern without refusing the edit.
+extends: sequence
+message: "Stacked articles: '%[1]s %[2]s %[3]s'. Two `the` phrases with the verb stranded behind both. Name the actor and put its verb next to it."
+level: warning
+tokens:
+  - pattern: (?i)the
+  - tag: JJ|JJR|JJS|NN|NNS|NNP|NNPS|VBN|VBG
+  - pattern: (?i)the
+    target: true
+  # A verb must follow the second phrase, which a stacked article without a
+  # stranded verb ("I gave the man the book", "the bigger the better") does
+  # not have.
+  - pattern: (?i)[a-z][a-z]+
+    tag: JJ|JJR|JJS|NN|NNS|NNP|NNPS|VBN|VBG
+    min: 1
+  - pattern: (?i)[a-z][a-z]+
+    tag: VB|VBZ|VBD|VBP|VBN|VBG|MD
