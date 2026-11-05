@@ -29,6 +29,7 @@ import {
 	type CachePaths,
 	type RegistryEntry,
 } from "./registry.js";
+import { serialQueue } from "./pacer.js";
 import type { RawDockerSnapshot } from "./ledger.js";
 import type { ProcTable, SampleRecord } from "./types.js";
 
@@ -75,7 +76,7 @@ export class SharedClient implements SessionDriver {
 	private deliveredRun: string | null = null;
 	private deliveredSeq = -1;
 	private stopped = false;
-	private tail: Promise<void> = Promise.resolve();
+	private readonly enqueue: (work: () => Promise<void>) => Promise<void>;
 	private readonly now: () => number;
 	private readonly isAlive: (pid: number) => boolean;
 	private readonly log: (message: string) => void;
@@ -86,6 +87,7 @@ export class SharedClient implements SessionDriver {
 		this.now = opts.now ?? Date.now;
 		this.isAlive = opts.isAlive ?? processAlive;
 		this.log = opts.log ?? (() => {});
+		this.enqueue = serialQueue(this.log);
 		ensureWritable(opts.paths);
 		// A client that restarts for the same session continues where the last
 		// one stopped delivering.
@@ -254,18 +256,6 @@ export class SharedClient implements SessionDriver {
 		return this.opts.enabled?.() ?? true;
 	}
 
-	/** Run one unit of work after the last, whatever the last one did. */
-	private enqueue(work: () => Promise<void>): Promise<void> {
-		const run = async () => {
-			try {
-				await work();
-			} catch (err) {
-				this.log(`tick failed: ${message(err)}`);
-			}
-		};
-		this.tail = this.tail.then(run, run);
-		return this.tail;
-	}
 }
 
 /** The in-process sampler behind the same interface, for a broken cache dir. */

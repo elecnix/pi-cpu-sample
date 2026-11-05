@@ -13,13 +13,33 @@ import type { SampleRecord } from "./types.js";
 
 export type SampleSink = (record: SampleRecord) => void;
 
+/**
+ * Run one unit of work after the last, whatever the last one did. A failure is
+ * logged and swallowed: a throw from a tick must not become an unhandled
+ * rejection that ends the agent's process.
+ */
+export function serialQueue(log: (message: string) => void): (work: () => Promise<void>) => Promise<void> {
+	let tail: Promise<void> = Promise.resolve();
+	return (work) => {
+		const run = async () => {
+			try {
+				await work();
+			} catch (err) {
+				log(`tick failed: ${err instanceof Error ? err.message : err}`);
+			}
+		};
+		tail = tail.then(run, run);
+		return tail;
+	};
+}
+
 /** The part of Sampler that the pacer drives. */
 export interface Tickable {
 	tick(): Promise<SampleRecord>;
 }
 
 export class Pacer {
-	private tail: Promise<void> = Promise.resolve();
+	private readonly enqueue: (work: () => Promise<void>) => Promise<void>;
 	private stopped = false;
 	/** True once a full sample has been taken since the session was last idle. */
 	private active = true;
@@ -31,7 +51,9 @@ export class Pacer {
 		private log: (message: string) => void = () => {},
 		/** False while sampling is switched off; the timer keeps running. */
 		private enabled: () => boolean = () => true,
-	) {}
+	) {
+		this.enqueue = serialQueue(log);
+	}
 
 	/** One timer tick: sample while busy, skip the sample while idle. */
 	tick(): Promise<void> {
@@ -96,20 +118,4 @@ export class Pacer {
 		}
 	}
 
-	/**
-	 * Run one unit of work after the last, whatever the last one did. A failure
-	 * is logged and swallowed: a throw from the idle check must not become an
-	 * unhandled rejection that ends the agent's process.
-	 */
-	private enqueue(work: () => Promise<void>): Promise<void> {
-		const run = async () => {
-			try {
-				await work();
-			} catch (err) {
-				this.log(`tick failed: ${err instanceof Error ? err.message : err}`);
-			}
-		};
-		this.tail = this.tail.then(run, run);
-		return this.tail;
-	}
 }
