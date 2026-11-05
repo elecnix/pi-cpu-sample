@@ -35,49 +35,76 @@ export interface Membership {
 }
 
 /**
+ * One process table, indexed once for every session in a machine-wide pass.
+ *
+ * The per-session work then walks only the session's own tree. Building the
+ * index costs one pass over the table, where the old per-session sampler paid
+ * that pass once per session.
+ */
+export class ProcIndex {
+	readonly byPid = new Map<number, ProcRow>();
+	readonly byKey = new Map<string, ProcRow>();
+	/** pid of every row, so a parent key lookup stays O(1). */
+	readonly keyByPid = new Map<number, string>();
+	readonly children = new Map<number, ProcRow[]>();
+	readonly dockerHost = new Set<string>();
+
+	static build(rows: ProcRow[]): ProcIndex {
+		const index = new ProcIndex();
+		for (const row of rows) {
+			const key = keyOf(row);
+			index.byPid.set(row.pid, row);
+			index.byKey.set(key, row);
+			index.keyByPid.set(row.pid, key);
+			const list = index.children.get(row.ppid);
+			if (list) list.push(row);
+			else index.children.set(row.ppid, [row]);
+			if (DOCKER_PROC_PREFIXES.some((p) => row.comm.startsWith(p))) index.dockerHost.add(key);
+		}
+		return index;
+	}
+
+	/** Keys of every process whose parent chain reaches the agent. */
+	treeKeys(agentPid: number): Set<string> {
+		const tree = new Set<string>();
+		const agent = this.byPid.get(agentPid);
+		if (!agent) return tree;
+		const stack: ProcRow[] = [agent];
+		tree.add(keyOf(agent));
+		while (stack.length > 0) {
+			const parent = stack.pop()!;
+			for (const child of this.children.get(parent.pid) ?? []) {
+				const key = keyOf(child);
+				if (!tree.has(key)) {
+					tree.add(key);
+					stack.push(child);
+				}
+			}
+		}
+		return tree;
+	}
+}
+
+/**
  * Split the table into the session tree (processes whose parent chain reaches
  * the agent), processes already known to carry the session tag, and Docker
  * host processes. Tag membership is passed in because it comes from the env
  * reader's cache, not from the table.
  */
 export function classify(rows: ProcRow[], agentPid: number, taggedKeys: Set<string>): Membership {
-	const byPid = new Map<number, ProcRow>();
-	const byKey = new Map<string, ProcRow>();
-	const children = new Map<number, ProcRow[]>();
-	for (const row of rows) {
-		byPid.set(row.pid, row);
-		byKey.set(keyOf(row), row);
-		const list = children.get(row.ppid);
-		if (list) list.push(row);
-		else children.set(row.ppid, [row]);
-	}
-	const tree = new Set<string>();
-	const stack: ProcRow[] = [];
-	const agent = byPid.get(agentPid);
-	if (agent) {
-		stack.push(agent);
-		tree.add(keyOf(agent));
-	}
-	while (stack.length > 0) {
-		const parent = stack.pop()!;
-		for (const child of children.get(parent.pid) ?? []) {
-			const key = keyOf(child);
-			if (!tree.has(key)) {
-				tree.add(key);
-				stack.push(child);
-			}
-		}
-	}
-	const dockerHost = new Set<string>();
-	for (const row of rows) {
-		if (DOCKER_PROC_PREFIXES.some((p) => row.comm.startsWith(p))) dockerHost.add(keyOf(row));
-	}
+	return classifyIndex(ProcIndex.build(rows), agentPid, taggedKeys);
+}
+
+/** `classify` over an index another session already built. */
+export function classifyIndex(index: ProcIndex, agentPid: number, taggedKeys: Set<string>): Membership {
+	const tree = index.treeKeys(agentPid);
+	const dockerHost = index.dockerHost;
 	const tagged = new Set<string>();
 	for (const key of taggedKeys) {
 		if (tree.has(key) || dockerHost.has(key)) continue;
-		if (byKey.has(key)) tagged.add(key);
+		if (index.byKey.has(key)) tagged.add(key);
 	}
-	return { tree, tagged, dockerHost, rows: byKey };
+	return { tree, tagged, dockerHost, rows: index.byKey };
 }
 
 export interface Buckets {
@@ -95,8 +122,14 @@ const PROC_LIST_CAP = 64;
  * processes that were in the tree and now sit outside it. A paused sampler
  * watches this set, because these are the processes it can no longer see.
  */
-export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: Set<string>, everInTree: Set<string>): Set<string> {
-	const m = classify(rows, agentPid, taggedKeys);
+export function outsideTreeKeys(
+	rows: ProcRow[],
+	agentPid: number,
+	taggedKeys: Set<string>,
+	everInTree: Set<string>,
+	index?: ProcIndex,
+): Set<string> {
+	const m = index ? classifyIndex(index, agentPid, taggedKeys) : classify(rows, agentPid, taggedKeys);
 	const keys = new Set<string>();
 	for (const key of m.tagged) keys.add(key);
 	for (const key of everInTree) {
@@ -158,10 +191,15 @@ export class SessionLedger {
 		return ledger;
 	}
 
-	consume(rows: ProcRow[], taggedKeys: Set<string>, usage: Map<number, ProcCpu>): Buckets {
-		const m = classify(rows, this.agentPid, taggedKeys);
-		const keyByPid = new Map<number, string>();
-		for (const row of rows) keyByPid.set(row.pid, keyOf(row));
+	consume(
+		rows: ProcRow[],
+		taggedKeys: Set<string>,
+		usage: Map<number, ProcCpu>,
+		opts: { index?: ProcIndex; excludePid?: number } = {},
+	): Buckets {
+		const m = opts.index ? classifyIndex(opts.index, this.agentPid, taggedKeys) : classify(rows, this.agentPid, taggedKeys);
+		const keyByPid = opts.index ? opts.index.keyByPid : new Map<number, string>();
+		if (!opts.index) for (const row of rows) keyByPid.set(row.pid, keyOf(row));
 		for (const key of m.tree) this.everInTree.add(key);
 		const sessionKeys = new Set<string>([...m.tree, ...this.everInTree, ...m.tagged]);
 		for (const key of m.dockerHost) sessionKeys.delete(key);
@@ -196,8 +234,9 @@ export class SessionLedger {
 			}
 			// A failed read adds nothing. The process either comes back on the next
 			// tick, or another member's reaped total picked up its time, or the
-			// bucket floor below holds the total.
-			const ru = usage.get(row.pid) ?? null;
+			// bucket floor below holds the total. The session's own instrumentation
+			// process reads as a failed read: its time belongs to the sampler.
+			const ru = row.pid === opts.excludePid ? null : (usage.get(row.pid) ?? null);
 			const total = ru ? ru.own + ru.reaped : 0;
 			const own = ru ? ru.own : 0;
 			if (ru) this.lastTotal.set(key, total);

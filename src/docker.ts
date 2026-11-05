@@ -70,6 +70,19 @@ export class DockerClient {
 
 	/** Cumulative container CPU seconds for every stack under `cwd`. */
 	async listUnder(cwd: string): Promise<{ ok: boolean; containers: ContainerObs[] }> {
+		return this.collect((dir) => isUnder(dir, cwd));
+	}
+
+	/**
+	 * Cumulative container CPU seconds for every compose container on the
+	 * machine. The machine-wide sampler reads this once per tick and hands each
+	 * session the stacks under its own working directory.
+	 */
+	async listAll(): Promise<{ ok: boolean; containers: ContainerObs[] }> {
+		return this.collect(() => true);
+	}
+
+	private async collect(accept: (dir: string) => boolean): Promise<{ ok: boolean; containers: ContainerObs[] }> {
 		const socketPath = this.socket();
 		if (socketPath === null) return { ok: false, containers: [] };
 		let list: ContainerListEntry[];
@@ -87,7 +100,7 @@ export class DockerClient {
 			const id = c?.Id ?? "";
 			const labels = c?.Labels ?? {};
 			const dir = labels[LABEL_DIR] ?? "";
-			if (!id || !dir || !isUnder(dir, cwd)) continue;
+			if (!id || !dir || !accept(dir)) continue;
 			try {
 				const stats = JSON.parse(
 					await this.get(socketPath, `/containers/${id}/stats?stream=false&one-shot=true`),
