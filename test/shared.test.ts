@@ -290,3 +290,36 @@ describe("session state", () => {
 		assert.equal(a.lastTs, null);
 	});
 });
+
+describe("cross-language state", () => {
+	it("restores a result file as the Python sampler writes it", () => {
+		// The wire format shared with skills/cpu-sample/scripts/shared.py. The
+		// literal here mirrors what that module writes, field for field.
+		const pythonState: SessionState = {
+			run: "run-from-python",
+			seq: 7,
+			lastTs: 1_700_000_000_000,
+			ledger: {
+				lastBuckets: { agent: 8, descendant: 3, taggedOrphan: 0 },
+				bucketOf: [["100:1700000000:100", "agent"]],
+				lastTotal: [["100:1700000000:100", 11]],
+				lastParent: [["100:1700000000:100", null]],
+			},
+			everInTree: ["100:1700000000:100"],
+			outsideTree: [],
+			dockerSeen: [{ id: "c1", project: "p", dir: "/w", cpuS: 2 }],
+		};
+		const account = sessionAccount({
+			session: "claude:abc",
+			agent: "claude",
+			agentPid: 100,
+			cwd: "/w",
+			excludePid: -1,
+			state: pythonState,
+		});
+		assert.equal(account.runId, "run-from-python");
+		assert.equal(account.seq, 7);
+		assert.ok(account.everInTree.has("100:1700000000:100"));
+		assert.equal(account.dockerLedger.exportState()[0]?.project, "p");
+	});
+});
