@@ -105,6 +105,14 @@ export function outsideTreeKeys(rows: ProcRow[], agentPid: number, taggedKeys: S
 	return keys;
 }
 
+/** The accounting state of a session ledger, as plain JSON for a handover. */
+export interface LedgerState {
+	lastBuckets: { agent: number; descendant: number; taggedOrphan: number };
+	bucketOf: [string, "agent" | "descendant" | "orphan"][];
+	lastTotal: [string, number][];
+	lastParent: [string, string | null][];
+}
+
 export class SessionLedger {
 	/** The last reported bucket totals; each bucket only ever grows. */
 	private lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0 };
@@ -126,6 +134,29 @@ export class SessionLedger {
 		private agentPid: number,
 		private everInTree: Set<string>,
 		) {}
+
+	/**
+	 * The accounting state as plain JSON, so a new owner process continues the
+	 * same totals after a handover.
+	 */
+	exportState(): LedgerState {
+		return {
+			lastBuckets: { ...this.lastBuckets },
+			bucketOf: [...this.bucketOf],
+			lastTotal: [...this.lastTotal],
+			lastParent: [...this.lastParent],
+		};
+	}
+
+	/** Rebuild a ledger from `exportState`, keeping the caller's everInTree. */
+	static restore(agentPid: number, everInTree: Set<string>, state: LedgerState): SessionLedger {
+		const ledger = new SessionLedger(agentPid, everInTree);
+		ledger.lastBuckets = { ...state.lastBuckets };
+		for (const [key, bucket] of state.bucketOf) ledger.bucketOf.set(key, bucket);
+		for (const [key, total] of state.lastTotal) ledger.lastTotal.set(key, total);
+		for (const [key, parent] of state.lastParent) ledger.lastParent.set(key, parent);
+		return ledger;
+	}
 
 	consume(rows: ProcRow[], taggedKeys: Set<string>, usage: Map<number, ProcCpu>): Buckets {
 		const m = classify(rows, this.agentPid, taggedKeys);
@@ -222,6 +253,18 @@ export interface ContainerObs {
  */
 export class DockerLedger {
 	private seen = new Map<string, ContainerObs>();
+
+	/** The containers this run has observed, for a handover. */
+	exportState(): ContainerObs[] {
+		return [...this.seen.values()].map((o) => ({ ...o }));
+	}
+
+	/** Rebuild a Docker ledger from `exportState`. */
+	static restore(state: ContainerObs[]): DockerLedger {
+		const ledger = new DockerLedger();
+		for (const o of state) ledger.seen.set(o.id, { ...o });
+		return ledger;
+	}
 
 	consume(obs: ContainerObs[]): DockerSample {
 		for (const o of obs) this.seen.set(o.id, { ...o });
