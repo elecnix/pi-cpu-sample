@@ -56,16 +56,16 @@ Counters are cumulative, so a pause keeps the totals exact. Pause and resume bra
 
 ## Measurements
 
-All figures come from `npm run bench:shared` on an Apple Silicon laptop with about 2,000 processes in its table. The synthetic sessions shared four quiet process trees. Numbers vary with machine load, so each cell gives the range over three runs.
+All figures come from `npm run bench:shared` on an Apple Silicon laptop with about 2,000 processes in its table. The synthetic sessions shared four quiet process trees. Numbers vary with machine load, so each cell gives the range over four runs.
 
 | What | 1 session | 20 sessions | 100 sessions |
 | --- | --- | --- | --- |
-| Owner full pass, Docker stubbed out | 15 to 25 ms | 22 to 31 ms | 64 to 99 ms |
-| Owner full pass, Docker live | 37 to 59 ms | 36 to 59 ms | 72 to 126 ms |
-| Resume check, every session idle | 0.5 to 1.1 ms | 2.2 to 5.3 ms | 9 to 27 ms |
+| Owner full pass, Docker stubbed out | 14 to 25 ms | 22 to 31 ms | 54 to 99 ms |
+| Owner full pass, Docker live | 24 to 59 ms | 36 to 59 ms | 72 to 126 ms |
+| Resume check, every session idle | 0.5 to 1.1 ms | 2.2 to 5.3 ms | 9.1 to 27 ms |
 | Contender tick, per session | 0.2 to 0.4 ms | 0.2 to 0.4 ms | 0.2 to 0.4 ms |
 
-One owner tick takes 7.7 to 15.1 CPU-seconds an hour at 100 sessions. The design this replaced ran one sampler per session: on the same machine one in-process tick cost 12 to 44 ms, so 100 sessions would have spent 140 to 520 CPU-seconds an hour.
+One owner tick takes 6.5 to 15.1 CPU-seconds an hour at 100 sessions. The design this replaced ran one sampler per session: on the same machine one in-process tick cost 12 to 44 ms, so 100 sessions would have spent 140 to 522 CPU-seconds an hour.
 
 `npm run bench:idle` measures the in-process fallback on its own, with Docker stubbed out and synthetic session trees.
 
