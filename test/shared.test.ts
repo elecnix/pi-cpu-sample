@@ -323,3 +323,27 @@ describe("cross-language state", () => {
 		assert.equal(account.dockerLedger.exportState()[0]?.project, "p");
 	});
 });
+
+describe("the machine-wide cache", () => {
+	it("drops the entry of a process that left the table", async () => {
+		const table = new FakeTable(
+			[row(100, 0), row(300, 1)],
+			new Map([
+				[100, { own: 1, reaped: 0 }],
+				[300, { own: 4, reaped: 0 }],
+			]),
+			new Map([[300, "pi:a"]]),
+		);
+		const machine = new MachinePass({ table, docker: noDocker, selfUid: 501 });
+		const a = sessionAccount({ session: "pi:a", agent: "pi", agentPid: 100, cwd: "/w", excludePid: -1 });
+		sessionRecord(a, await machine.observe(new Set()), { cpuS: 0, wallS: 0 }, 1_700_000_000_000);
+		assert.equal(machine.exportState(1, 0).tags.length, 2);
+		table.setRows([row(100, 0)]);
+		sessionRecord(a, await machine.observe(new Set()), { cpuS: 0, wallS: 0 }, 1_700_000_030_000);
+		const tags = machine.exportState(1, 0).tags;
+		assert.deepEqual(
+			tags.map(([key]) => key),
+			["100:1700000000:100"],
+		);
+	});
+});

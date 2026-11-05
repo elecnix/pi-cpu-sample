@@ -96,6 +96,10 @@ export class MachinePass {
 		const rows = table.rows() ?? [];
 		const index = ProcIndex.build(rows);
 		const uid = this.opts.selfUid ?? process.getuid?.() ?? -1;
+		// A dead process can never carry a tag this machine needs again. Without
+		// this prune the cache grows for every process the machine ever runs, and
+		// every tick rewrites all of it to the owner state file.
+		this.pruneCache(index);
 
 		// Tag detection: processes this user owns, outside every session tree,
 		// whose environment was never read. The cache makes the scan happen once
@@ -171,6 +175,17 @@ export class MachinePass {
 			taggedKeysFor: (session: string) => this.tagged.get(session) ?? NO_KEYS,
 			atMs: Date.now(),
 		};
+	}
+
+	/** Drop cached tags for processes the current table no longer lists. */
+	private pruneCache(index: ProcIndex): void {
+		if (this.tagCache.size === 0) return;
+		for (const key of this.tagCache.keys()) {
+			if (index.byKey.has(key)) continue;
+			const tag = this.tagCache.get(key);
+			this.tagCache.delete(key);
+			if (tag !== null && tag !== undefined) this.tagged.get(tag)?.delete(key);
+		}
 	}
 
 	private cacheTag(key: string, tag: string | null): void {
