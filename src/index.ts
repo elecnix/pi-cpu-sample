@@ -1,37 +1,59 @@
 /**
- * The pi extension: start a sampler on session_start, append one cumulative
- * `cpu-sample` entry every 30 seconds while the session works, and stop on
- * session_shutdown.
+ * The pi extension: register this session with the machine-wide sampler, lead
+ * it while this process holds the owner lock, and follow another owner
+ * otherwise. One `cpu-sample` entry lands in this session's transcript per new
+ * record, about every 30 seconds while the session works.
  *
- * Sampling stops while the session is idle, because fifty idle sessions should
- * cost fifty idle sessions, not fifty samplers. The first sample after waking
- * carries the cumulative counters across the gap, so a pause costs no accuracy.
+ * Sampling costs one machine-wide pass per tick on whichever session owns the
+ * lock, and one registration write per tick on every other session. The first
+ * sample after waking carries the cumulative counters across the gap, so a
+ * pause costs no accuracy.
  *
- * Sampling runs inside the pi process, so a session's `agent_cpu_s` includes
- * the sampler's own cost (each record carries the exact figure in
- * `sample_cpu_s`).
+ * When the shared cache cannot be used, the session falls back to the sampler
+ * this extension used to run inside its own process. Then a session's
+ * `agent_cpu_s` includes the sampler's own cost (each record carries the exact
+ * figure in `sample_cpu_s`), as before.
  */
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "./pi-stubs.js";
 import { createTable } from "./backend.js";
+import { Pacer } from "./pacer.js";
 import { DockerClient } from "./docker.js";
 import { IdleTracker } from "./idle.js";
 import { disableDir, killSwitchActive } from "./killswitch.js";
-import { Pacer } from "./pacer.js";
 import { Sampler } from "./sample.js";
+import { createSessionDriver, StandaloneSession, type SessionDriver } from "./client.js";
+import { cachePaths, defaultCacheDir } from "./registry.js";
 
 const INTERVAL_MS = 30_000;
 
+/** The SIGURG handler is installed once per process, however often pi reloads. */
+let signalHooked = false;
+
 export default function (pi: ExtensionAPI) {
-	/** The pacer of the running session, or null between sessions. */
-	let current: Pacer | null = null;
+	/** The driver of the running session, or null between sessions. */
+	let current: SessionDriver | null = null;
 	let liveCtx: ExtensionContext | null = null;
 	let liveSessionId: string | null = null;
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let turnOpen = false;
 	let wakeScheduled = false;
+
+	const killSwitchOff = () => !killSwitchActive({ dir: disableDir(homedir()), env: process.env });
+	const log = (message: string) => console.error(`[pi-cpu-sample] ${message}`);
+
+	// A wake nudge from another session's client lands here when this process
+	// holds the owner lock, so the turn's first sample is not half a minute late.
+	if (!signalHooked) {
+		signalHooked = true;
+		try {
+			process.on("SIGURG", () => void current?.tick());
+		} catch {
+			// A platform without SIGURG simply waits for the next timer tick.
+		}
+	}
 
 	pi.on("agent_start", () => {
 		turnOpen = true;
@@ -42,7 +64,7 @@ export default function (pi: ExtensionAPI) {
 		wakeScheduled = true;
 		queueMicrotask(() => {
 			wakeScheduled = false;
-			void current?.wake();
+			current?.wake();
 		});
 	});
 	pi.on("agent_settled", () => {
@@ -57,43 +79,48 @@ export default function (pi: ExtensionAPI) {
 		process.env.CPU_SAMPLE_SESSION = session;
 		const table = createTable();
 		if (!table) {
-			console.error(`[pi-cpu-sample] no process table for ${process.platform}; not sampling`);
+			log(`no process table for ${process.platform}; not sampling`);
 			return;
 		}
 		const cwd = ctx.cwd;
 		const docker = new DockerClient();
-		const sampler = new Sampler({
-			table,
-			docker: () => docker.listUnder(cwd),
-			agentPid: process.pid,
-			agent: "pi",
-			session,
-			cwd,
-			runId: randomUUID(),
-			selfPid: -1, // sampling is in-process: the agent's own CPU is counted
-		});
 		liveCtx = ctx;
 		liveSessionId = sessionId;
 		turnOpen = false; // a new session begins with no open turn
-		// pi answers for itself whether a run or a compaction is active. The
-		// event flag covers the gaps: before the first agent_start of a reload,
-		// and after agent_settled but before the next turn begins.
-		const tracker = new IdleTracker(sampler, () => turnOpen || liveCtx?.isIdle() === false);
-		const log = (message: string) => console.error(`[pi-cpu-sample] ${message}`);
-		const pacer = new Pacer(
-			sampler,
-			(rec) => pi.appendEntry("cpu-sample", rec),
-			tracker,
+		const inTurn = () => turnOpen || liveCtx?.isIdle() === false;
+		const driver = createSessionDriver({
+			paths: cachePaths(process.env.CPU_SAMPLE_CACHE_DIR ?? defaultCacheDir(homedir())),
+			identity: { session, agent: "pi", agentPid: process.pid, clientPid: process.pid, cwd },
+			table,
+			docker: () => docker.listAll(),
+			deliver: (rec) => pi.appendEntry("cpu-sample", rec),
+			inTurn,
+			enabled: killSwitchOff,
 			log,
-			// The kill switch takes effect at the next tick, and removing it
-			// resumes sampling, because the timer keeps running either way.
-			() => !killSwitchActive({ dir: disableDir(homedir()), env: process.env }),
-		);
-		timer = setInterval(() => void pacer.tick(), INTERVAL_MS);
+			standalone: () => {
+				// The fallback: sample this one tree inside this process, exactly as
+				// the extension did before the shared sampler existed.
+				const sampler = new Sampler({
+					table,
+					docker: () => docker.listUnder(cwd),
+					agentPid: process.pid,
+					agent: "pi",
+					session,
+					cwd,
+					runId: randomUUID(),
+					selfPid: -1,
+				});
+				const tracker = new IdleTracker(sampler, inTurn);
+				return new StandaloneSession(
+					new Pacer(sampler, (rec) => pi.appendEntry("cpu-sample", rec), tracker, log, killSwitchOff),
+				);
+			},
+		});
+		timer = setInterval(() => void driver.tick(), INTERVAL_MS);
 		timer.unref();
-		current = pacer;
+		current = driver;
 		// The first sample is the baseline; every later sample subtracts from it.
-		void pacer.tick();
+		void driver.tick();
 	});
 
 	// Registered once, so a second session in the same process cannot stack
@@ -105,19 +132,17 @@ export default function (pi: ExtensionAPI) {
 		if (timer) clearInterval(timer);
 		timer = null;
 		delete process.env.CPU_SAMPLE_SESSION;
-		const pacer = current;
-		const liveSessionCtx = liveCtx;
+		const driver = current;
 		try {
-			if (pacer && !killSwitchActive({ dir: disableDir(homedir()), env: process.env })) await pacer.stop();
+			// A final record, unless sampling is switched off. Either way the
+			// driver removes its registration and gives the lock back.
+			if (driver) await driver.stop();
 		} finally {
 			// stop() awaits an in-flight tick, which can include a Docker read. A
-			// session started during that await owns a new pacer, and this
+			// session started during that await owns a new driver, and this
 			// handler must not clear it.
-			// A session that ends mid-turn must not leave the next one looking
-			// busy. This runs whatever owns the slot by now, because the next
-			// session's pacer may already have been installed during the await.
 			turnOpen = false;
-			if (current === pacer) {
+			if (current === driver) {
 				current = null;
 				liveCtx = null;
 				liveSessionId = null;
