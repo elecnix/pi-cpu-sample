@@ -60,7 +60,7 @@ class FakeTable implements ProcTable {
 }
 
 function row(pid: number, ppid: number, opts: Partial<ProcRow> = {}): ProcRow {
-	return { pid, ppid, uid: 501, comm: `p${pid}`, startSec: 1_700_000_000, startUsec: pid, ...opts };
+	return { pid, ppid, uid: process.getuid?.() ?? 501, comm: `p${pid}`, startSec: 1_700_000_000, startUsec: pid, ...opts };
 }
 
 function entry(session: string, patch: Partial<RegistryEntry> = {}): RegistryEntry {
