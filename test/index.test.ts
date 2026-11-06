@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import extension from "../src/index.js";
 import { disableDir, killSwitchActive } from "../src/killswitch.js";
-import { cachePaths, readEntries, readResult } from "../src/registry.js";
+import { cachePaths, readEntries, readEntry, readResult } from "../src/registry.js";
 import type { ExtensionAPI, ExtensionContext } from "../src/pi-stubs.js";
 
 /** Enough of the pi host to drive the extension. */
@@ -84,6 +84,41 @@ describe("the pi extension over a shared cache", { skip: skipped }, () => {
 			else process.env.CPU_SAMPLE_CACHE_DIR = previous;
 			if (previousSession === undefined) delete process.env.CPU_SAMPLE_SESSION;
 			else process.env.CPU_SAMPLE_SESSION = previousSession;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reaches the live session after the extension reloads", async () => {
+		const root = mkdtempSync(join(tmpdir(), "cpu-sample-reload-"));
+		const previous = process.env.CPU_SAMPLE_CACHE_DIR;
+		process.env.CPU_SAMPLE_CACHE_DIR = root;
+		try {
+			const sessionId = `reload-${process.pid}`;
+			const ctx = fakeContext(sessionId);
+			const first = new FakePi();
+			extension(first.api());
+			await first.emit("session_start", ctx);
+			await until(() => first.entries.length >= 1);
+			await first.emit("session_shutdown", ctx);
+
+			// pi reloads the extension: a new invocation, the same process.
+			const second = new FakePi();
+			extension(second.api());
+			await second.emit("session_start", ctx);
+			await until(() => second.entries.length >= 1);
+
+			const cache = cachePaths(root);
+			const key = `pi-${sessionId}`;
+			const before = readEntry(cache, key)?.beat ?? 0;
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			// A contender nudges the owner with SIGURG.
+			process.kill(process.pid, "SIGURG");
+			await until(() => (readEntry(cache, key)?.beat ?? 0) > before);
+			assert.ok((readEntry(cache, key)?.beat ?? 0) > before, "the nudge should reach the reloaded session");
+			await second.emit("session_shutdown", ctx);
+		} finally {
+			if (previous === undefined) delete process.env.CPU_SAMPLE_CACHE_DIR;
+			else process.env.CPU_SAMPLE_CACHE_DIR = previous;
 			rmSync(root, { recursive: true, force: true });
 		}
 	});

@@ -7,6 +7,7 @@ import { Owner } from "../src/owner.js";
 import {
 	cachePaths,
 	readEntries,
+	readEntry,
 	readOwnerState,
 	readResult,
 	writeEntry,
@@ -105,7 +106,7 @@ async function ownerFor(
 		docker: noDocker,
 		identity,
 		now,
-		isAlive: (pid) => pid === process.pid || pid === 100,
+		isAlive: (pid) => pid === process.pid || pid === 100 || pid === 200,
 	});
 }
 
@@ -320,6 +321,94 @@ describe("Owner handover", () => {
 			const saved = readResult(paths, "pi-s1");
 			assert.equal(saved?.seq, 0);
 			assert.notEqual(saved?.record.run, "old-run");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("Owner robustness", () => {
+	it("keeps the saved state of a live client that went silent", async () => {
+		const { root, paths } = tempPaths();
+		try {
+			writeEntry(paths, entry("pi:s1"));
+			const table = new FakeTable(
+				[row(100, 0), row(101, 100)],
+				new Map([
+					[100, { own: 5, reaped: 0 }],
+					[101, { own: 2, reaped: 0 }],
+				]),
+			);
+			let clock = NOW;
+			const owner = await ownerFor(paths, table, "tok-a", () => clock);
+			await owner.pass();
+			const before = readResult(paths, "pi-s1");
+			assert.equal(before?.seq, 0);
+
+			// The machine slept: the owner ticks long before the client does.
+			clock = NOW + 10 * 60_000;
+			const silent = await owner.pass();
+			assert.equal(silent.kind, "idle");
+			// The registration and the saved state wait for the client.
+			assert.notEqual(readEntry(paths, "pi-s1"), null);
+			assert.equal(readResult(paths, "pi-s1")?.seq, 0);
+
+			// The client returns and the run continues where it stopped.
+			writeEntry(paths, entry("pi:s1", { beat: clock }));
+			await owner.pass();
+			const after = readResult(paths, "pi-s1");
+			assert.equal(after?.record.run, before?.record.run);
+			assert.equal(after?.seq, 1);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("drops a client that stays silent for an hour", async () => {
+		const { root, paths } = tempPaths();
+		try {
+			writeEntry(paths, entry("pi:s1"));
+			const table = new FakeTable([row(100, 0)], new Map([[100, { own: 1, reaped: 0 }]]));
+			let clock = NOW;
+			const owner = await ownerFor(paths, table, "tok-a", () => clock);
+			await owner.pass();
+			clock = NOW + 2 * 3_600_000;
+			await owner.pass();
+			assert.deepEqual(readEntries(paths), []);
+			assert.equal(readResult(paths, "pi-s1"), null);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rebuilds an account whose registration changed pids", async () => {
+		const { root, paths } = tempPaths();
+		try {
+			writeEntry(paths, entry("pi:s1"));
+			const table = new FakeTable(
+				[row(100, 0), row(101, 100), row(200, 0), row(201, 200)],
+				new Map([
+					[100, { own: 5, reaped: 0 }],
+					[101, { own: 2, reaped: 0 }],
+					[200, { own: 7, reaped: 0 }],
+					[201, { own: 3, reaped: 0 }],
+				]),
+			);
+			const owner = await ownerFor(paths, table, "tok-a");
+			await owner.pass();
+			const before = readResult(paths, "pi-s1");
+			assert.equal(before?.record.agentPid, 100);
+
+			// The same session comes back under a new process, before the owner
+			// ever saw a gap in the registration. It is a new session instance and
+			// starts a new run, so the old tree's totals cannot land in the new one.
+			writeEntry(paths, entry("pi:s1", { agentPid: 200, clientPid: 200 }));
+			await owner.pass();
+			const after = readResult(paths, "pi-s1");
+			assert.equal(after?.record.agentPid, 200);
+			assert.equal(after?.record.agentCpuS, 7);
+			assert.equal(after?.record.descendantCpuS, 3);
+			assert.notEqual(after?.record.run, before?.record.run);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

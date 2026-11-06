@@ -35,8 +35,10 @@ import { MachinePass, SessionProbe, exportAccountState, sessionAccount, sessionR
 import type { RawDockerSnapshot } from "./ledger.js";
 import type { ProcTable } from "./types.js";
 
-/** How long a registration may stay unrefreshed, in ms, before it is dropped. */
+/** How long a registration may stay unrefreshed, in ms, before its session is skipped. */
 export const ENTRY_STALE_MS = 120_000;
+/** How long the owner keeps the state of a silent client before dropping it. */
+export const ENTRY_ABANDON_MS = 3_600_000;
 
 export interface OwnerOptions {
 	paths: CachePaths;
@@ -48,6 +50,7 @@ export interface OwnerOptions {
 	now?: () => number;
 	isAlive?: (pid: number) => boolean;
 	staleEntryMs?: number;
+	abandonEntryMs?: number;
 }
 
 export type PassKind = "sampled" | "idle" | "not-owner";
@@ -136,13 +139,22 @@ export class Owner {
 	private refreshEntries(now: number): RegistryEntry[] {
 		const { paths } = this.opts;
 		const staleAfter = this.opts.staleEntryMs ?? ENTRY_STALE_MS;
+		const abandonAfter = this.opts.abandonEntryMs ?? ENTRY_ABANDON_MS;
 		const live = new Map<string, RegistryEntry>();
 		for (const entry of readEntries(paths)) {
-			if (!this.isAlive(entry.clientPid) || now - entry.beat > staleAfter) {
+			const silentMs = now - entry.beat;
+			if (!this.isAlive(entry.clientPid) || silentMs > abandonAfter) {
 				removeEntry(paths, entry.key);
 				removeResult(paths, entry.key);
 				this.forget(entry.key);
 				this.log(`dropped ${entry.session}`);
+				continue;
+			}
+			if (silentMs > staleAfter) {
+				// The machine slept, or the client is blocked. Nothing ran while it
+				// was silent, so sample nothing and keep its saved state. The next
+				// registration continues the same run.
+				this.forget(entry.key);
 				continue;
 			}
 			live.set(entry.key, entry);
@@ -152,6 +164,17 @@ export class Owner {
 			if (!live.has(key)) this.forget(key);
 		}
 		for (const entry of live.values()) {
+			const account = this.accounts.get(entry.key);
+			if (
+				account !== undefined &&
+				(account.agentPid !== entry.agentPid || account.excludePid !== excludePidFor(entry) || account.cwd !== entry.cwd)
+			) {
+				// The same session key came back under a new process. It is a new
+				// session instance, so it starts a new run: keeping the old ledger
+				// would count the old tree's totals inside the new one.
+				this.forget(entry.key);
+				removeResult(paths, entry.key);
+			}
 			if (!this.accounts.has(entry.key)) this.ensureAccount(entry);
 		}
 		return [...live.values()];
@@ -164,8 +187,7 @@ export class Owner {
 			agent: entry.agent,
 			agentPid: entry.agentPid,
 			cwd: entry.cwd,
-			// In-process clients are the agent itself and stay counted.
-			excludePid: entry.clientPid === entry.agentPid ? -1 : entry.clientPid,
+			excludePid: excludePidFor(entry),
 			key: entry.key,
 			state,
 		});
@@ -245,6 +267,11 @@ export class Owner {
 		}
 		writeOwnerState(paths, this.machine.exportState(identity.pid, this.now()));
 	}
+}
+
+/** The session's instrumentation pid, or -1 when the client is the agent itself. */
+function excludePidFor(entry: RegistryEntry): number {
+	return entry.clientPid === entry.agentPid ? -1 : entry.clientPid;
 }
 
 function cpuNow(): number {

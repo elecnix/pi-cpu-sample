@@ -31,6 +31,12 @@ const INTERVAL_MS = 30_000;
 
 /** The SIGURG handler is installed once per process, however often pi reloads. */
 let signalHooked = false;
+/**
+ * The driver a wake nudge reaches. It lives at module scope, so the handler
+ * installed by an earlier invocation of the extension still finds the session
+ * running after a reload.
+ */
+let signalTarget: { tick(): Promise<void> } | null = null;
 
 export default function (pi: ExtensionAPI) {
 	/** The driver of the running session, or null between sessions. */
@@ -49,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 	if (!signalHooked) {
 		signalHooked = true;
 		try {
-			process.on("SIGURG", () => void current?.tick());
+			process.on("SIGURG", () => void signalTarget?.tick());
 		} catch {
 			// A platform without SIGURG simply waits for the next timer tick.
 		}
@@ -119,6 +125,7 @@ export default function (pi: ExtensionAPI) {
 		timer = setInterval(() => void driver.tick(), INTERVAL_MS);
 		timer.unref();
 		current = driver;
+		signalTarget = driver;
 		// The first sample is the baseline; every later sample subtracts from it.
 		void driver.tick();
 	});
@@ -142,6 +149,7 @@ export default function (pi: ExtensionAPI) {
 			// session started during that await owns a new driver, and this
 			// handler must not clear it.
 			turnOpen = false;
+			if (signalTarget === driver) signalTarget = null;
 			if (current === driver) {
 				current = null;
 				liveCtx = null;

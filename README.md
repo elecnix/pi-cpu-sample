@@ -86,6 +86,7 @@ A process that was ever a tree member remains attributed after its original pare
 - macOS system daemons that work on the session's behalf (Spotlight indexing, XProtect) belong to no session, so no ledger records them.
 - The machine-wide pass runs inside the owner session's process, so that session's `agent_cpu_s` includes the pass. Every record of a tick states the cost in `sample_cpu_s`.
 - A contender takes over after 90 seconds without a new beat, so a hung owner costs the machine at most 90 seconds of sampling.
+- A client that stays silent past 120 seconds, as after a machine sleep, is skipped until it registers again. Its saved state waits for it, and the owner drops a client silent for an hour.
 
 ## Privacy
 
