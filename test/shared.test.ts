@@ -347,3 +347,27 @@ describe("the machine-wide cache", () => {
 		);
 	});
 });
+
+describe("state from an older writer", () => {
+	it("restores a state written before the ledger maps existed", async () => {
+		// A result file from an earlier version carries the run and seq but no
+		// per-key maps. Restoring must start a usable ledger instead of throwing.
+		const partial = {
+			run: "older-run",
+			seq: 5,
+			lastTs: 1_700_000_000_000,
+			everInTree: ["100:1700000000:100"],
+			outsideTree: [],
+			dockerSeen: [],
+		} as unknown as SessionState;
+		const account = sessionAccount({ session: "pi:a", agent: "pi", agentPid: 100, cwd: "/w", excludePid: -1, state: partial });
+		assert.equal(account.seq, 5);
+		assert.equal(account.runId, "older-run");
+		const table = new FakeTable([row(100, 0)], new Map([[100, { own: 5, reaped: 0 }]]));
+		const machine = new MachinePass({ table, docker: noDocker, selfUid: 501 });
+		const rec = sessionRecord(account, await machine.observe(new Set()), { cpuS: 0, wallS: 0 }, 1_700_000_030_000);
+		assert.equal(rec.seq, 5);
+		assert.equal(rec.agentCpuS, 5);
+		assert.equal(rec.intervalS, 30);
+	});
+});

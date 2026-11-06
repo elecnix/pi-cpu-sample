@@ -172,3 +172,18 @@ describe("release", () => {
 		}
 	});
 });
+
+describe("lock file hygiene", () => {
+	it("leaves no temporary file after a successful create", () => {
+		const { root, paths } = tempPaths();
+		try {
+			tryAcquire(paths, identity(process.pid, "tok-a"), NOW);
+			assert.deepEqual(
+				readdirSync(paths.root).filter((n) => n.startsWith("owner.lock.new-")),
+				[],
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});

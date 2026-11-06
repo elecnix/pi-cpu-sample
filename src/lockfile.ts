@@ -146,13 +146,15 @@ function createLock(paths: CachePaths, identity: LockIdentity, nowMs: number, tr
 		linkSync(tmp, paths.lockFile);
 		return true;
 	} catch (err) {
-		tryUnlink(tmp);
 		// ENOENT: a takeover candidate renamed the stale record aside between
 		// the read and the link. The path is free again, so one retry decides.
 		if ((err as NodeJS.ErrnoException).code === "ENOENT" && tries === 0) {
 			return createLock(paths, identity, nowMs, tries + 1);
 		}
 		return false;
+	} finally {
+		// The record lives at the lock path now; the temporary name is spent.
+		tryUnlink(tmp);
 	}
 }
 

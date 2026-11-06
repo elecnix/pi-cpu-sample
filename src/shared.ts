@@ -242,7 +242,7 @@ export interface SessionInit {
 export function sessionAccount(init: SessionInit): SessionAccount {
 	const key = init.key ?? keyFor(init.session);
 	if (init.state) {
-		const everInTree = new Set(init.state.everInTree);
+		const everInTree = new Set(init.state.everInTree ?? []);
 		return {
 			key,
 			session: init.session,
@@ -254,8 +254,10 @@ export function sessionAccount(init: SessionInit): SessionAccount {
 			seq: init.state.seq,
 			lastTs: init.state.lastTs,
 			everInTree,
-			outsideTree: new Set(init.state.outsideTree),
-			ledger: SessionLedger.restore(init.agentPid, everInTree, init.state.ledger),
+			outsideTree: new Set(init.state.outsideTree ?? []),
+			ledger: init.state.ledger
+				? SessionLedger.restore(init.agentPid, everInTree, init.state.ledger)
+				: new SessionLedger(init.agentPid, everInTree),
 			dockerLedger: DockerLedger.restore(init.state.dockerSeen ?? []),
 		};
 	}

@@ -282,6 +282,42 @@ describe("Owner handover", () => {
 		}
 	});
 
+	it("starts a new run when a restarted owner finds state from another process", async () => {
+		const { root, paths } = tempPaths();
+		try {
+			writeEntry(paths, entry("pi:s1"));
+			const table = new FakeTable(
+				[row(100, 0), row(101, 100), row(200, 0), row(201, 200)],
+				new Map([
+					[100, { own: 5, reaped: 0 }],
+					[101, { own: 2, reaped: 0 }],
+					[200, { own: 7, reaped: 0 }],
+					[201, { own: 3, reaped: 0 }],
+				]),
+			);
+			const first = await ownerFor(paths, table, "tok-a");
+			await first.pass();
+			const before = readResult(paths, "pi-s1");
+			assert.equal(before?.record.agentPid, 100);
+			assert.equal(before?.clientPid, 100);
+			const { release } = await import("../src/lockfile.js");
+			release(paths, "tok-a");
+
+			// The same session re-registers under a new process, and a restarted
+			// owner holds no account in memory to compare against.
+			writeEntry(paths, entry("pi:s1", { agentPid: 200, clientPid: 200 }));
+			const second = await ownerFor(paths, table, "tok-b");
+			await second.pass();
+			const after = readResult(paths, "pi-s1");
+			assert.equal(after?.record.agentPid, 200);
+			assert.equal(after?.record.agentCpuS, 7);
+			assert.equal(after?.record.descendantCpuS, 3);
+			assert.notEqual(after?.record.run, before?.record.run);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("starts a new run when the result file is gone", async () => {
 		const { root, paths } = tempPaths();
 		try {
@@ -296,6 +332,7 @@ describe("Owner handover", () => {
 				agentPid: 100,
 				cwd: "/w",
 				ownerPid: process.pid,
+				clientPid: 100,
 				writtenAt: new Date(NOW).toISOString(),
 				run: "old-run",
 				seq: 9,

@@ -181,13 +181,19 @@ export class SessionLedger {
 		};
 	}
 
-	/** Rebuild a ledger from `exportState`, keeping the caller's everInTree. */
-	static restore(agentPid: number, everInTree: Set<string>, state: LedgerState): SessionLedger {
+	/**
+	 * Rebuild a ledger from `exportState`, keeping the caller's everInTree.
+	 *
+	 * A state written by an earlier version may carry the run and seq but none
+	 * of the per-key maps. Missing pieces restore as an empty ledger, so the
+	 * session continues its run from a fresh baseline instead of failing.
+	 */
+	static restore(agentPid: number, everInTree: Set<string>, state: Partial<LedgerState>): SessionLedger {
 		const ledger = new SessionLedger(agentPid, everInTree);
-		ledger.lastBuckets = { ...state.lastBuckets };
-		for (const [key, bucket] of state.bucketOf) ledger.bucketOf.set(key, bucket);
-		for (const [key, total] of state.lastTotal) ledger.lastTotal.set(key, total);
-		for (const [key, parent] of state.lastParent) ledger.lastParent.set(key, parent);
+		ledger.lastBuckets = { agent: 0, descendant: 0, taggedOrphan: 0, ...state.lastBuckets };
+		for (const [key, bucket] of state.bucketOf ?? []) ledger.bucketOf.set(key, bucket);
+		for (const [key, total] of state.lastTotal ?? []) ledger.lastTotal.set(key, total);
+		for (const [key, parent] of state.lastParent ?? []) ledger.lastParent.set(key, parent);
 		return ledger;
 	}
 

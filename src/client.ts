@@ -144,8 +144,11 @@ export class SharedClient implements SessionDriver {
 		const now = this.now();
 		if (!this.enabled()) {
 			// Stop heartbeating so the machine goes on without this session, and
-			// give the lock back if this process holds it.
+			// give the lock back if this process holds it. The owner object goes
+			// too: another owner may advance every session's state while this one
+			// is off, so the next takeover restores it from the result files.
 			if (isOwner(paths, this.token)) release(paths, this.token);
+			this.owner = null;
 			removeEntry(paths, this.key);
 			return;
 		}

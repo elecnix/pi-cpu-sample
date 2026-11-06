@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SharedClient, createSessionDriver, type SessionDriver } from "../src/client.js";
 import { cachePaths, readEntry, readResult } from "../src/registry.js";
-import { readLock } from "../src/lockfile.js";
+import { readLock, release } from "../src/lockfile.js";
 import type { RawDockerSnapshot } from "../src/ledger.js";
 import type { ProcCpu, ProcRow, ProcTable, SampleRecord } from "../src/types.js";
 
@@ -187,6 +187,42 @@ describe("SharedClient", () => {
 			await client.tick();
 			assert.equal(readLock(paths)?.key, "pi-s1");
 			assert.equal(records.length, 2);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("starts from the saved state after giving the lock back and taking it again", async () => {
+		const { root, paths } = tempPaths();
+		try {
+			const table = new FakeTable(
+				[row(100, 0), row(200, 0)],
+				new Map([
+					[100, { own: 1, reaped: 0 }],
+					[200, { own: 2, reaped: 0 }],
+				]),
+			);
+			let enabled = true;
+			const a = makeClient(paths, table, "pi:a", 100, { enabled: () => enabled });
+			const b = makeClient(paths, table, "claude:b", 200);
+			await a.client.tick(); // a owns and samples itself
+			await b.client.tick(); // b registers
+			await a.client.tick(); // a samples both
+			assert.equal(readResult(paths, "claude-b")?.seq, 0);
+
+			// Somebody turns the kill switch on: a gives the lock back.
+			enabled = false;
+			await a.client.tick();
+			// b takes the machine and advances its own result.
+			await b.client.tick();
+			assert.equal(readResult(paths, "claude-b")?.seq, 1);
+			release(paths, b.client.token);
+
+			// a comes back and takes the lock again. It must continue from b's
+			// saved state, not from the accounts it held before it stood down.
+			enabled = true;
+			await a.client.tick();
+			assert.equal(readResult(paths, "claude-b")?.seq, 2);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

@@ -181,7 +181,17 @@ export class Owner {
 	}
 
 	private ensureAccount(entry: RegistryEntry): SessionAccount {
-		const state = readResult(this.opts.paths, entry.key)?.state ?? null;
+		const saved = readResult(this.opts.paths, entry.key);
+		// Saved accounting belongs to the process that wrote it. A session key
+		// that now names a different agent or client starts a new run instead of
+		// inheriting totals from a tree it never walked. A result written before
+		// the clientPid field existed can only be checked by agent and cwd.
+		const sameProcess =
+			saved !== null &&
+			saved.agentPid === entry.agentPid &&
+			(saved.clientPid === undefined || saved.clientPid === entry.clientPid) &&
+			saved.cwd === entry.cwd;
+		const state = sameProcess ? saved.state : null;
 		const account = sessionAccount({
 			session: entry.session,
 			agent: entry.agent,
@@ -254,6 +264,7 @@ export class Owner {
 				session: batch.account.session,
 				agent: batch.account.agent,
 				agentPid: batch.account.agentPid,
+				clientPid: batch.account.excludePid === -1 ? batch.account.agentPid : batch.account.excludePid,
 				cwd: batch.account.cwd,
 				ownerPid: identity.pid,
 				writtenAt: new Date(atMs).toISOString(),

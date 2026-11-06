@@ -136,6 +136,7 @@ describe("result files", () => {
 		session: "pi:s1",
 		agent: "pi",
 		agentPid: 100,
+		clientPid: 100,
 		cwd: "/w",
 		ownerPid: 200,
 		writtenAt: new Date(1_700_000_000_000).toISOString(),

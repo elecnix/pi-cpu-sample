@@ -95,11 +95,15 @@ export class Pacer {
 		});
 	}
 
-	/** Stop the cadence and write the final sample, unless the session was idle. */
+	/**
+	 * Stop the cadence and write the final sample, unless the session was idle
+	 * or sampling is switched off. The kill switch covers the shutdown sample
+	 * too, so nothing reaches the session once sampling is off.
+	 */
 	stop(): Promise<void> {
 		this.stopped = true;
 		return this.enqueue(async () => {
-			if (!this.active) return;
+			if (!this.active || !this.enabled()) return;
 			await this.sample();
 			this.active = false;
 		});

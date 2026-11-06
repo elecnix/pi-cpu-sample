@@ -100,6 +100,8 @@ export interface ResultFile {
 	session: string;
 	agent: "pi" | "claude";
 	agentPid: number;
+	/** The process that ticked for the session when this state was written. */
+	clientPid: number;
 	cwd: string;
 	ownerPid: number;
 	writtenAt: string;
