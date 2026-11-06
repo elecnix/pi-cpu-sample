@@ -12,7 +12,8 @@
   "scripts": {
     "check": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "node --import tsx --test test/*.test.ts",
-    "bench:idle": "node --import tsx bench/idle-cost.ts"
+    "bench:idle": "node --import tsx bench/idle-cost.ts",
+    "bench:shared": "node --import tsx bench/shared-cost.ts"
   },
   "keywords": [
     "pi-package",
@@ -36,9 +37,15 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "typebox": { "optional": true }
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

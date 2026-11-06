@@ -199,3 +199,39 @@ describe("resolveSocket", () => {
 		assert.equal(resolveSocket({ DOCKER_HOST: "tcp://127.0.0.1:2375", exists: () => true, home: "/home/u" }), null);
 	});
 });
+
+describe("DockerClient.listAll", () => {
+	const cleanups: Array<() => Promise<void>> = [];
+	after(async () => {
+		for (const fn of cleanups) await fn();
+	});
+
+	it("reports every compose container once, whatever its working directory", async () => {
+		const mock = startDockerMock({
+			containers: [
+				{ Id: "aaa111", Labels: { "com.docker.compose.project": "web", "com.docker.compose.project.working_dir": "/w/deploy/local" } },
+				{ Id: "bbb222", Labels: { "com.docker.compose.project": "other", "com.docker.compose.project.working_dir": "/elsewhere" } },
+				{ Id: "ccc333", Labels: {} },
+			],
+			stats: { aaa111: 1_000_000_000, bbb222: 2_000_000_000, ccc333: 5 },
+		});
+		cleanups.push(mock.close);
+		const client = new DockerClient(mock.socketPath);
+		const snap = await client.listAll();
+		assert.equal(snap.ok, true);
+		assert.deepEqual(
+			snap.containers.map((c) => [c.id, c.dir, c.cpuS]),
+			[
+				["aaa111", "/w/deploy/local", 1],
+				["bbb222", "/elsewhere", 2],
+			],
+		);
+	});
+
+	it("reports not ok when Docker is not reachable", async () => {
+		const client = new DockerClient(join(tmpdir(), "no-such-docker-socket.sock"));
+		const snap = await client.listAll();
+		assert.equal(snap.ok, false);
+		assert.deepEqual(snap.containers, []);
+	});
+});

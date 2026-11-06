@@ -297,6 +297,31 @@ describe("Pacer", () => {
 		assert.equal(r.appended.length, 2);
 	});
 
+	it("writes no final sample on stop while sampling is switched off", async () => {
+		let enabled = true;
+		let ticks = 0;
+		const sampler = {
+			tick: async (): Promise<SampleRecord> => {
+				ticks += 1;
+				return record();
+			},
+		};
+		const pacer = new Pacer(
+			sampler,
+			() => {},
+			{ check: () => ({ idle: false, reason: "turn" }) },
+			() => {},
+			() => enabled,
+		);
+		await pacer.tick();
+		assert.equal(ticks, 1);
+		enabled = false;
+		await pacer.stop();
+		// The kill switch covers the shutdown sample too.
+		assert.equal(ticks, 1);
+		assert.equal(pacer.isStopped, true);
+	});
+
 	it("writes one more sample when the turn ends during a sample", async () => {
 		const r = rig();
 		let checks = 0;

@@ -234,7 +234,7 @@ export function byDepth(rows: ProcRow[]): ProcRow[] {
  * A null row ends that branch: a pid the kernel stopped between the listing and
  * the lookup has no children left to find.
  */
-function descendantRows(table: ProcTable, agentPid: number): ProcRow[] | null {
+export function descendantRows(table: ProcTable, agentPid: number): ProcRow[] | null {
 	const out: ProcRow[] = [];
 	const seen = new Set<number>([agentPid]);
 	let level = table.childPids(agentPid);
